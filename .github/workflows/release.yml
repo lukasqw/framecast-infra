@@ -50,6 +50,7 @@ jobs:
 
     outputs:
       version: ${{ steps.bump.outputs.version }}
+      tag_version: ${{ steps.bump.outputs.tag_version }}
       previous_version: ${{ steps.current.outputs.version }}
       bump_type: ${{ steps.bump.outputs.bump_type }}
       has_changes: ${{ steps.bump.outputs.has_changes }}
@@ -171,17 +172,20 @@ jobs:
               ;;
           esac
 
-          # Se for develop, adicionar sufixo -rc (release candidate)
+          NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+
+          # Se for develop, adicionar sufixo -rc apenas na tag (não na branch)
           if [ "${{ env.IS_DEVELOP }}" == "true" ]; then
-            NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}-rc"
+            TAG_VERSION="${NEW_VERSION}-rc"
             echo "is_release_candidate=true" >> $GITHUB_OUTPUT
           else
-            NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+            TAG_VERSION="$NEW_VERSION"
             echo "is_release_candidate=false" >> $GITHUB_OUTPUT
           fi
 
           echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
-          echo "::notice::Nova versão: $NEW_VERSION"
+          echo "tag_version=$TAG_VERSION" >> $GITHUB_OUTPUT
+          echo "::notice::Nova versão: $NEW_VERSION (tag: $TAG_VERSION)"
 
       - name: Resumo da Versão
         if: steps.bump.outputs.has_changes == 'true'
@@ -222,17 +226,18 @@ jobs:
       - name: Criar Tag RC
         id: tag
         run: |
+          TAG_VERSION="${{ needs.calculate-version.outputs.tag_version }}"
           VERSION="${{ needs.calculate-version.outputs.version }}"
 
-          echo "🏷️ Criando tag de release candidate $VERSION..."
+          echo "🏷️ Criando tag de release candidate $TAG_VERSION..."
 
           # Verificar se tag já existe
-          if git rev-parse "$VERSION" >/dev/null 2>&1; then
-            echo "::warning::Tag $VERSION já existe"
+          if git rev-parse "$TAG_VERSION" >/dev/null 2>&1; then
+            echo "::warning::Tag $TAG_VERSION já existe"
             echo "created=false" >> $GITHUB_OUTPUT
           else
             # Criar tag anotada
-            git tag -a "$VERSION" -m "Release Candidate $VERSION
+            git tag -a "$TAG_VERSION" -m "Release Candidate $VERSION
 
             Tipo: ${{ needs.calculate-version.outputs.bump_type }}
             Versão anterior: ${{ needs.calculate-version.outputs.previous_version }}
@@ -241,17 +246,19 @@ jobs:
             
             ⚠️ Esta é uma release candidate. Aguardando validação para release final."
 
-            git push origin "$VERSION"
+            git push origin "$TAG_VERSION"
 
             echo "created=true" >> $GITHUB_OUTPUT
-            echo "::notice::Tag RC $VERSION criada com sucesso"
+            echo "::notice::Tag RC $TAG_VERSION criada com sucesso"
           fi
 
       - name: Criar Branch de Release
         id: create
         run: |
           VERSION="${{ needs.calculate-version.outputs.version }}"
-          BRANCH_NAME="release/$VERSION"
+          # Remover sufixo -rc do nome da branch
+          VERSION_CLEAN="${VERSION%-rc}"
+          BRANCH_NAME="release/$VERSION_CLEAN"
 
           echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
 
@@ -266,17 +273,106 @@ jobs:
             echo "::notice::Branch $BRANCH_NAME criada com sucesso"
           fi
 
+      - name: Criar Pull Request para Main
+        id: create-pr
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const version = '${{ needs.calculate-version.outputs.version }}';
+            const branchName = '${{ steps.create.outputs.branch_name }}';
+            const bumpType = '${{ needs.calculate-version.outputs.bump_type }}';
+            const previousVersion = '${{ needs.calculate-version.outputs.previous_version }}';
+
+            // Verificar se PR já existe
+            const { data: existingPRs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: `${context.repo.owner}:${branchName}`,
+              base: 'main',
+              state: 'open'
+            });
+
+            if (existingPRs.length > 0) {
+              console.log(`PR já existe: ${existingPRs[0].html_url}`);
+              core.setOutput('pr_url', existingPRs[0].html_url);
+              core.setOutput('pr_number', existingPRs[0].number);
+              return;
+            }
+
+            // Criar PR
+            const { data: pr } = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚀 Release ${version}`,
+              head: branchName,
+              base: 'main',
+              body: `## 🚀 Release ${version}
+
+            Esta PR finaliza a release candidate e cria a versão final.
+
+            ### 📋 Informações
+
+            | Item | Valor |
+            |------|-------|
+            | Versão | ${version} |
+            | Tipo | ${bumpType} |
+            | Versão Anterior | ${previousVersion} |
+            | Branch | \`${branchName}\` |
+
+            ### ✅ Checklist
+
+            - [ ] Changelog revisado
+            - [ ] Testes executados com sucesso
+            - [ ] Validação em staging concluída
+            - [ ] Documentação atualizada
+            - [ ] Breaking changes documentados (se aplicável)
+
+            ### 🔄 O que acontece ao fazer merge
+
+            1. Tag RC (\`${version}\`) será removida
+            2. Tag final será criada (ex: \`v1.2.0\`)
+            3. GitHub Release será atualizada para versão final
+            4. Branch de release será atualizada
+
+            ### 📝 Próximos Passos Após Merge
+
+            1. Deploy em staging
+            2. Validação em staging
+            3. Deploy em produção
+            4. Monitoramento de métricas
+
+            ---
+            *PR criado automaticamente pelo workflow de release*`,
+              draft: false
+            });
+
+            console.log(`✅ PR criado: ${pr.html_url}`);
+            core.setOutput('pr_url', pr.html_url);
+            core.setOutput('pr_number', pr.number);
+            core.notice(`PR criado: ${pr.html_url}`);
+
+            // Adicionar labels
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              labels: ['release', version, 'automated']
+            });
+
       - name: Resumo
         run: |
           echo "## 🏷️ Release Candidate Criado" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Item | Valor |" >> $GITHUB_STEP_SUMMARY
           echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Tag RC | ${{ needs.calculate-version.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Versão | ${{ needs.calculate-version.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tag RC | ${{ needs.calculate-version.outputs.tag_version }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Branch | ${{ steps.create.outputs.branch_name }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Tipo | ${{ needs.calculate-version.outputs.bump_type }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| PR | ${{ steps.create-pr.outputs.pr_url }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "⚠️ **Próximo passo:** Merge para main para finalizar a release" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️ **Próximo passo:** Revisar e fazer merge do PR #${{ steps.create-pr.outputs.pr_number }} para finalizar a release" >> $GITHUB_STEP_SUMMARY
 
   # ============================================
   # FINALIZAR RELEASE (MAIN)
@@ -308,27 +404,26 @@ jobs:
         id: finalize
         run: |
           VERSION="${{ needs.calculate-version.outputs.version }}"
+          TAG_RC="${VERSION}-rc"
 
-          # Remover sufixo -rc se existir
-          FINAL_VERSION="${VERSION%-rc}"
-          echo "final_version=$FINAL_VERSION" >> $GITHUB_OUTPUT
+          echo "final_version=$VERSION" >> $GITHUB_OUTPUT
 
-          echo "🏷️ Finalizando release: $VERSION → $FINAL_VERSION..."
+          echo "🏷️ Finalizando release: $TAG_RC → $VERSION..."
 
           # Deletar tag RC se existir
-          if git rev-parse "$VERSION" >/dev/null 2>&1; then
-            echo "Removendo tag RC $VERSION..."
-            git push --delete origin "$VERSION" || true
-            git tag -d "$VERSION" || true
+          if git rev-parse "$TAG_RC" >/dev/null 2>&1; then
+            echo "Removendo tag RC $TAG_RC..."
+            git push --delete origin "$TAG_RC" || true
+            git tag -d "$TAG_RC" || true
           fi
 
           # Verificar se tag final já existe
-          if git rev-parse "$FINAL_VERSION" >/dev/null 2>&1; then
-            echo "::warning::Tag $FINAL_VERSION já existe"
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "::warning::Tag $VERSION já existe"
             echo "created=false" >> $GITHUB_OUTPUT
           else
             # Criar tag final
-            git tag -a "$FINAL_VERSION" -m "Release $FINAL_VERSION
+            git tag -a "$VERSION" -m "Release $VERSION
 
             Tipo: ${{ needs.calculate-version.outputs.bump_type }}
             Versão anterior: ${{ needs.calculate-version.outputs.previous_version }}
@@ -337,17 +432,17 @@ jobs:
             
             ✅ Release finalizada e validada."
 
-            git push origin "$FINAL_VERSION"
+            git push origin "$VERSION"
 
             echo "created=true" >> $GITHUB_OUTPUT
-            echo "::notice::Tag final $FINAL_VERSION criada com sucesso"
+            echo "::notice::Tag final $VERSION criada com sucesso"
           fi
 
       - name: Atualizar Branch de Release
         id: create
         run: |
-          FINAL_VERSION="${{ steps.finalize.outputs.final_version }}"
-          BRANCH_NAME="release/$FINAL_VERSION"
+          VERSION="${{ steps.finalize.outputs.final_version }}"
+          BRANCH_NAME="release/$VERSION"
 
           echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
 
@@ -364,6 +459,57 @@ jobs:
           fi
 
           echo "::notice::Branch $BRANCH_NAME atualizada"
+
+      - name: Atualizar PR
+        id: update-pr
+        uses: actions/github-script@v7
+        continue-on-error: true
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const finalVersion = '${{ steps.finalize.outputs.final_version }}';
+            const branchName = '${{ steps.create.outputs.branch_name }}';
+
+            // Buscar PR que foi merged
+            const { data: prs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: `${context.repo.owner}:${branchName}`,
+              base: 'main',
+              state: 'closed'
+            });
+
+            if (prs.length === 0) {
+              console.log('Nenhum PR encontrado');
+              return;
+            }
+
+            const pr = prs[0];
+
+            // Adicionar comentário no PR
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              body: `## ✅ Release Finalizada
+
+            A release foi finalizada com sucesso!
+
+            ### 📦 Versão Final
+
+            - **Tag:** \`${finalVersion}\`
+            - **Release:** [Ver Release](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/tag/${finalVersion})
+
+            ### 🔗 Links
+
+            - [Comparar mudanças](https://github.com/${context.repo.owner}/${context.repo.repo}/compare/${finalVersion})
+            - [Branch de release](https://github.com/${context.repo.owner}/${context.repo.repo}/tree/${branchName})
+
+            ---
+            *Comentário adicionado automaticamente pelo workflow de release*`
+            });
+
+            console.log(\`✅ PR #\${pr.number} atualizado\`);
 
       - name: Resumo
         run: |
@@ -545,6 +691,7 @@ jobs:
           script: |
             const isDevelop = '${{ github.ref }}' === 'refs/heads/develop';
             const version = '${{ needs.calculate-version.outputs.version }}';
+            const tagVersion = '${{ needs.calculate-version.outputs.tag_version }}';
             const finalVersion = '${{ needs.finalize-release.outputs.final_version }}' || version;
             const changelog = `${{ needs.generate-changelog.outputs.changelog }}`;
             const branchName = isDevelop 
@@ -556,10 +703,10 @@ jobs:
             body += `\n\n### 🌿 Branch de Release\n\nBranch \`${branchName}\` criada para esta release.`;
 
             if (isDevelop) {
-              body += `\n\n### ⚠️ Release Candidate\n\nEsta é uma release candidate. Aguardando merge para main para finalizar.`;
+              body += `\n\n### ⚠️ Release Candidate\n\nEsta é uma release candidate (tag: \`${tagVersion}\`). Aguardando merge para main para finalizar.`;
             }
 
-            const releaseVersion = isDevelop ? version : finalVersion;
+            const releaseVersion = isDevelop ? tagVersion : finalVersion;
             const isPrerelease = isDevelop;
 
             const { data: release } = await github.rest.repos.createRelease({
