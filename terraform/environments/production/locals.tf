@@ -33,11 +33,18 @@ locals {
   # Lab role ARN (AWS Academy)
   lab_role_arn = var.lab_role != "" ? var.lab_role : "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/LabRole"
 
-  # Single subnet for POC (use only first available subnet in us-east-1a)
+  # Multiple subnets across AZs (required by AWS - minimum 2 AZs)
+  # AWS requires at least 2 AZs for EKS, RDS, and ALB
   filtered_subnet_ids = [
     for subnet in data.aws_subnet.selected : subnet.id
-    if subnet.availability_zone == "${var.aws_region}a"
+    if contains(["${var.aws_region}a", "${var.aws_region}b"], subnet.availability_zone)
   ]
+
+  # Primary subnet for single-AZ resources (cost optimization)
+  primary_subnet_id = [
+    for subnet in data.aws_subnet.selected : subnet.id
+    if subnet.availability_zone == "${var.aws_region}a"
+  ][0]
 
   # Database configuration
   db_name     = replace(lower(var.project_name), "-", "_")

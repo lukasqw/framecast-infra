@@ -692,22 +692,23 @@ jobs:
             const isDevelop = '${{ github.ref }}' === 'refs/heads/develop';
             const version = '${{ needs.calculate-version.outputs.version }}';
             const tagVersion = '${{ needs.calculate-version.outputs.tag_version }}';
-            const finalVersion = '${{ needs.finalize-release.outputs.final_version }}' || version;
             const changelog = `${{ needs.generate-changelog.outputs.changelog }}`;
             const branchName = isDevelop 
               ? '${{ needs.create-release-candidate.outputs.branch_name }}'
-              : '${{ needs.finalize-release.outputs.branch_name }}';
+              : '${{ needs.prepare-release.outputs.branch_name }}';
             const bumpType = '${{ needs.calculate-version.outputs.bump_type }}';
 
             let body = changelog;
             body += `\n\n### 🌿 Branch de Release\n\nBranch \`${branchName}\` criada para esta release.`;
 
             if (isDevelop) {
-              body += `\n\n### ⚠️ Release Candidate\n\nEsta é uma release candidate (tag: \`${tagVersion}\`). Aguardando merge para main para finalizar.`;
+              body += `\n\n### ⚠️ Release Candidate\n\nEsta é uma release candidate (tag: \`${tagVersion}\`). Aguardando merge para main e deploy para finalizar.`;
+            } else {
+              body += `\n\n### 🚀 Deploy em Andamento\n\nA tag final será criada automaticamente após o deploy ser concluído com sucesso.`;
             }
 
-            const releaseVersion = isDevelop ? tagVersion : finalVersion;
-            const isPrerelease = isDevelop;
+            const releaseVersion = isDevelop ? tagVersion : tagVersion;
+            const isPrerelease = true; // Sempre prerelease até o deploy finalizar
 
             const { data: release } = await github.rest.repos.createRelease({
               owner: context.repo.owner,
@@ -845,7 +846,7 @@ jobs:
           echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| Cálculo de Versão | ${{ needs.calculate-version.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Release Candidate | ${{ needs.create-release-candidate.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Finalizar Release | ${{ needs.finalize-release.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Preparar Release | ${{ needs.prepare-release.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Changelog | ${{ needs.generate-changelog.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| GitHub Release | ${{ needs.create-github-release.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Issue | ${{ needs.create-release-issue.result }} |" >> $GITHUB_STEP_SUMMARY
