@@ -33,10 +33,10 @@ locals {
   # Lab role ARN (AWS Academy)
   lab_role_arn = var.lab_role != "" ? var.lab_role : "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/LabRole"
 
-  # Filtered subnets (exclude us-east-1e)
+  # Single subnet for POC (use only first available subnet in us-east-1a)
   filtered_subnet_ids = [
     for subnet in data.aws_subnet.selected : subnet.id
-    if subnet.availability_zone != "${var.aws_region}e"
+    if subnet.availability_zone == "${var.aws_region}a"
   ]
 
   # Database configuration

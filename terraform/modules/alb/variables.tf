@@ -39,7 +39,7 @@ variable "enable_http2" {
 variable "enable_cross_zone_load_balancing" {
   description = "Habilitar load balancing cross-zone"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "target_group_port" {

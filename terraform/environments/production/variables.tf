@@ -39,13 +39,13 @@ variable "instance_type" {
 variable "node_desired_size" {
   description = "Número desejado de nodes"
   type        = number
-  default     = 2
+  default     = 1
 }
 
 variable "node_max_size" {
   description = "Número máximo de nodes"
   type        = number
-  default     = 3
+  default     = 2
 }
 
 variable "node_min_size" {
@@ -82,7 +82,7 @@ variable "rds_allocated_storage" {
 variable "rds_backup_retention_period" {
   description = "Período de retenção de backup em dias"
   type        = number
-  default     = 7
+  default     = 1
 }
 
 variable "rds_multi_az" {
