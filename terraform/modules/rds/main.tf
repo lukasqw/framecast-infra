@@ -37,8 +37,8 @@ resource "aws_db_instance" "this" {
   backup_window           = var.backup_window
   maintenance_window      = var.maintenance_window
 
-  multi_az               = var.multi_az
-  skip_final_snapshot    = var.skip_final_snapshot
+  multi_az                  = var.multi_az
+  skip_final_snapshot       = var.skip_final_snapshot
   final_snapshot_identifier = var.skip_final_snapshot ? null : "${var.identifier}-final-snapshot-${formatdate("YYYY-MM-DD-hhmm", timestamp())}"
 
   enabled_cloudwatch_logs_exports = var.enabled_cloudwatch_logs_exports

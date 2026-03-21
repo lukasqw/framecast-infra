@@ -1,0 +1,380 @@
+name: CI - Testes e Validação
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - "terraform/**"
+      - "kubernetes/**"
+      - ".github/workflows/**"
+  push:
+    branches: [develop]
+    paths:
+      - "terraform/**"
+      - "kubernetes/**"
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+  security-events: write
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: us-east-1
+  TF_VERSION: 1.7.0
+  WORKING_DIR: terraform/environments/production
+
+jobs:
+  # ============================================
+  # VALIDAÇÃO E FORMATAÇÃO
+  # ============================================
+  validate:
+    name: Validação Terraform
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Format Check
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          echo "🔍 Verificando formatação..."
+          terraform fmt -check -recursive -diff
+        continue-on-error: false
+
+      - name: Terraform Init
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          echo "🔧 Inicializando Terraform..."
+          terraform init -backend=false
+
+      - name: Terraform Validate
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          echo "✅ Validando configuração..."
+          terraform validate -no-color
+
+      - name: Validation Summary
+        if: always()
+        run: |
+          echo "## ✅ Validação Terraform" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Format | ${{ job.status }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Validate | ${{ job.status }} |" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================
+  # TESTES DE SEGURANÇA
+  # ============================================
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: validate
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run tfsec
+        id: tfsec
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: ${{ env.WORKING_DIR }}
+          soft_fail: true
+          format: sarif
+          sarif_file: tfsec-results.sarif
+          additional_args: --minimum-severity MEDIUM
+
+      - name: Upload tfsec SARIF
+        if: always() && hashFiles('tfsec-results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        continue-on-error: true
+        with:
+          sarif_file: tfsec-results.sarif
+
+      - name: Run Checkov
+        id: checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: ${{ env.WORKING_DIR }}
+          framework: terraform
+          soft_fail: true
+          output_format: sarif
+          output_file_path: ./checkov-results.sarif
+
+      - name: Debug SARIF Files
+        if: always()
+        run: |
+          echo "🔍 Checking for SARIF files..."
+          ls -la *.sarif 2>/dev/null || echo "No SARIF files found in root"
+          find . -name "*.sarif" -type f 2>/dev/null || echo "No SARIF files found anywhere"
+
+      - name: Upload Checkov SARIF
+        if: always() && hashFiles('checkov-results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        continue-on-error: true
+        with:
+          sarif_file: checkov-results.sarif
+
+      - name: Security Summary
+        if: always()
+        run: |
+          echo "## 🔒 Security Scan" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Scanner | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| tfsec | ${{ steps.tfsec.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Checkov | ${{ steps.checkov.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Verifique a aba Security para detalhes completos." >> $GITHUB_STEP_SUMMARY
+
+  # ============================================
+  # TERRAFORM PLAN
+  # ============================================
+  plan:
+    name: Terraform Plan
+    needs: [validate, security-scan]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          echo "🔧 Inicializando Terraform com backend..."
+          terraform init
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: ${{ env.WORKING_DIR }}
+        env:
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+        run: |
+          echo "📋 Gerando plano de execução..."
+          terraform plan -no-color -out=tfplan 2>&1 | tee plan.txt
+
+          # Extrair estatísticas do plano
+          PLAN_OUTPUT=$(cat plan.txt)
+          echo "plan_output<<EOF" >> $GITHUB_OUTPUT
+          echo "$PLAN_OUTPUT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ github.sha }}
+          path: |
+            ${{ env.WORKING_DIR }}/tfplan
+            ${{ env.WORKING_DIR }}/plan.txt
+          retention-days: 5
+
+      - name: Comment PR with Plan
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const planPath = '${{ env.WORKING_DIR }}/plan.txt';
+
+            let plan = 'Plan file not found';
+            try {
+              plan = fs.readFileSync(planPath, 'utf8');
+              // Limitar tamanho do plano para não exceder limite do comentário
+              if (plan.length > 60000) {
+                plan = plan.substring(0, 60000) + '\n\n... (truncated)';
+              }
+            } catch (error) {
+              console.log('Error reading plan file:', error);
+            }
+
+            const output = `## 📋 Terraform Plan
+
+            <details>
+            <summary>🔍 Clique para ver o plano completo</summary>
+
+            \`\`\`terraform
+            ${plan}
+            \`\`\`
+
+            </details>
+
+            ---
+            **Pusher:** @${{ github.actor }}
+            **Commit:** ${{ github.sha }}
+            **Workflow:** [View Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            `;
+
+            // Buscar comentários existentes
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            // Encontrar comentário anterior do bot
+            const botComment = comments.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('Terraform Plan')
+            );
+
+            if (botComment) {
+              // Atualizar comentário existente
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: output
+              });
+            } else {
+              // Criar novo comentário
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: output
+              });
+            }
+
+      - name: Check Plan Status
+        if: steps.plan.outcome == 'failure'
+        run: |
+          echo "❌ Terraform plan falhou!"
+          exit 1
+
+  # ============================================
+  # TESTES ADICIONAIS
+  # ============================================
+  tests:
+    name: Testes Adicionais
+    needs: validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verificar Estrutura de Arquivos
+        run: |
+          echo "📁 Verificando estrutura de arquivos..."
+
+          # Verificar se arquivos obrigatórios existem
+          REQUIRED_FILES=(
+            "terraform/environments/production/main.tf"
+            "terraform/environments/production/variables.tf"
+            "terraform/environments/production/outputs.tf"
+            "terraform/environments/production/backend.tf"
+          )
+
+          for file in "${REQUIRED_FILES[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "❌ Arquivo obrigatório não encontrado: $file"
+              exit 1
+            fi
+            echo "✅ $file"
+          done
+
+      - name: Verificar Módulos
+        run: |
+          echo "🔍 Verificando módulos Terraform..."
+
+          MODULES_DIR="terraform/modules"
+          if [ -d "$MODULES_DIR" ]; then
+            for module in "$MODULES_DIR"/*; do
+              if [ -d "$module" ]; then
+                echo "Verificando módulo: $(basename $module)"
+                
+                # Verificar arquivos essenciais do módulo
+                if [ ! -f "$module/main.tf" ]; then
+                  echo "⚠️ Módulo $(basename $module) sem main.tf"
+                fi
+                
+                if [ ! -f "$module/variables.tf" ]; then
+                  echo "⚠️ Módulo $(basename $module) sem variables.tf"
+                fi
+                
+                if [ ! -f "$module/outputs.tf" ]; then
+                  echo "⚠️ Módulo $(basename $module) sem outputs.tf"
+                fi
+              fi
+            done
+          fi
+
+      - name: Test Summary
+        run: |
+          echo "## 🧪 Testes Adicionais" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Estrutura de arquivos validada" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Módulos verificados" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================
+  # RESUMO FINAL DO CI
+  # ============================================
+  ci-summary:
+    name: Resumo do CI
+    needs: [validate, security-scan, plan, tests]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Generate CI Summary
+        run: |
+          echo "# 🎯 Resumo do CI" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Status dos Jobs" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Validação | ${{ needs.validate.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Scan | ${{ needs.security-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Terraform Plan | ${{ needs.plan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Testes | ${{ needs.tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Determinar status geral
+          if [ "${{ needs.validate.result }}" == "success" ] && \
+             [ "${{ needs.security-scan.result }}" == "success" ] && \
+             [ "${{ needs.plan.result }}" == "success" ] && \
+             [ "${{ needs.tests.result }}" == "success" ]; then
+            echo "## ✅ CI passou com sucesso!" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Todas as verificações passaram. O código está pronto para merge." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ❌ CI falhou" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Algumas verificações falharam. Revise os logs acima." >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "**Executado por:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
