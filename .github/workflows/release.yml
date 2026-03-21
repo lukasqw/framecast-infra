@@ -1,0 +1,334 @@
+name: Release - Gerenciamento de Release
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "terraform/**"
+      - "kubernetes/**"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versão do release (ex: v1.0.0)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-management
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  # ============================================
+  # GERENCIAR RELEASE BRANCH
+  # ============================================
+  manage-release:
+    name: Gerenciar Release Branch
+    runs-on: ubuntu-latest
+
+    outputs:
+      release_branch: ${{ steps.release.outputs.branch }}
+      release_version: ${{ steps.release.outputs.version }}
+      pr_number: ${{ steps.release.outputs.pr_number }}
+      pr_url: ${{ steps.release.outputs.pr_url }}
+      action_taken: ${{ steps.release.outputs.action }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Gerenciar Release
+        id: release
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { execSync } = require('child_process');
+
+            // Gerar versão
+            let version;
+            if ('${{ github.event.inputs.version }}') {
+              version = '${{ github.event.inputs.version }}';
+            } else {
+              const date = new Date().toISOString().split('T')[0].replace(/-/g, '');
+              const shortSha = execSync('git rev-parse --short HEAD').toString().trim();
+              version = `${date}-${shortSha}`;
+            }
+
+            const releaseBranch = `release/${version}`;
+            core.setOutput('version', version);
+            core.setOutput('branch', releaseBranch);
+
+            console.log(`📦 Versão: ${version}`);
+            console.log(`🌿 Branch: ${releaseBranch}`);
+
+            // Buscar PRs abertos de release para main
+            const { data: openPRs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              base: 'main',
+              head: `${context.repo.owner}:release/`
+            });
+
+            // Filtrar PRs que começam com release/
+            const releasePRs = openPRs.filter(pr => pr.head.ref.startsWith('release/'));
+
+            if (releasePRs.length > 0) {
+              // Já existe uma release branch aberta
+              const existingPR = releasePRs[0];
+              const existingBranch = existingPR.head.ref;
+              
+              console.log(`✅ Release branch existente encontrada: ${existingBranch}`);
+              console.log(`🔄 Mergeando develop na branch existente...`);
+              
+              core.setOutput('action', 'merged');
+              core.setOutput('branch', existingBranch);
+              core.setOutput('pr_number', existingPR.number);
+              core.setOutput('pr_url', existingPR.html_url);
+              
+              // Fazer checkout da branch existente e mergear develop
+              execSync(`git fetch origin ${existingBranch}`);
+              execSync(`git checkout ${existingBranch}`);
+              
+              try {
+                execSync('git merge origin/develop --no-edit');
+                execSync(`git push origin ${existingBranch}`);
+                
+                // Adicionar comentário no PR
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: existingPR.number,
+                  body: `## 🔄 Develop Mergeado
+                  
+            Novos commits de \`develop\` foram mergeados nesta release.
+
+            **Commit:** ${{ github.sha }}
+            **Autor:** @${{ github.actor }}
+            **Data:** ${new Date().toISOString()}
+
+            Por favor, revise as mudanças antes de mergear para \`main\`.`
+                });
+                
+                core.notice(`✅ Develop mergeado com sucesso em ${existingBranch}`);
+                
+              } catch (error) {
+                core.setFailed(`❌ Erro ao mergear develop: ${error.message}`);
+                
+                // Comentar sobre conflito
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: existingPR.number,
+                  body: `## ⚠️ Conflito de Merge
+                  
+            Não foi possível mergear automaticamente \`develop\` nesta release.
+
+            **Erro:** ${error.message}
+
+            Por favor, resolva os conflitos manualmente:
+            \`\`\`bash
+            git checkout ${existingBranch}
+            git merge develop
+            # Resolver conflitos
+            git push origin ${existingBranch}
+            \`\`\``
+                });
+                
+                throw error;
+              }
+              
+            } else {
+              // Criar nova release branch
+              console.log(`🆕 Criando nova release branch: ${releaseBranch}`);
+              
+              core.setOutput('action', 'created');
+              
+              execSync(`git checkout -b ${releaseBranch}`);
+              execSync(`git push origin ${releaseBranch}`);
+              
+              // Criar PR para main
+              const { data: pr } = await github.rest.pulls.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `🚀 Release ${version}`,
+                head: releaseBranch,
+                base: 'main',
+                body: `## 🚀 Release ${version}
+
+            Esta release contém mudanças de infraestrutura prontas para produção.
+
+            ### 📋 Checklist de Deploy
+
+            - [ ] Revisar Terraform Plan
+            - [ ] Verificar estimativa de custos
+            - [ ] Confirmar resultados do security scan
+            - [ ] Validar com a equipe
+            - [ ] Aprovar e mergear para produção
+
+            ### 📊 Informações
+
+            | Item | Valor |
+            |------|-------|
+            | Versão | ${version} |
+            | Branch Base | develop |
+            | Commit | ${{ github.sha }} |
+            | Autor | @${{ github.actor }} |
+            | Data | ${new Date().toISOString()} |
+
+            ### 🔍 Mudanças Incluídas
+
+            Esta release inclui todas as mudanças mergeadas em \`develop\` desde a última release.
+
+            ### ⚙️ Pós-Deploy
+
+            Após o merge para \`main\`:
+            - [ ] Verificar saúde da infraestrutura
+            - [ ] Confirmar deploy da aplicação
+            - [ ] Monitorar logs e métricas
+            - [ ] Validar endpoints
+
+            ---
+            *Release criado automaticamente pelo workflow*
+            *Trigger: ${{ github.event_name }}*`
+              });
+              
+              core.setOutput('pr_number', pr.number);
+              core.setOutput('pr_url', pr.html_url);
+              
+              // Adicionar labels
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: ['release', 'infrastructure', 'production']
+              });
+              
+              // Adicionar reviewers (opcional - ajuste conforme necessário)
+              try {
+                await github.rest.pulls.requestReviewers({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: pr.number,
+                  team_reviewers: ['devops', 'infrastructure'] // Ajuste conforme seus times
+                });
+              } catch (error) {
+                console.log('⚠️ Não foi possível adicionar reviewers:', error.message);
+              }
+              
+              core.notice(`✅ PR criado: ${pr.html_url}`);
+            }
+
+      - name: Verificar Status do PR
+        if: steps.release.outputs.pr_number
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prNumber = ${{ steps.release.outputs.pr_number }};
+
+            // Verificar se PR está aberto
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+
+            if (pr.state !== 'open') {
+              console.log(`⚠️ PR #${prNumber} não está aberto (estado: ${pr.state})`);
+              
+              // Se o PR foi fechado sem merge, reabrir
+              if (pr.state === 'closed' && !pr.merged) {
+                console.log('🔄 Reabrindo PR...');
+                
+                await github.rest.pulls.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: prNumber,
+                  state: 'open'
+                });
+                
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  body: `## 🔄 PR Reaberto
+                  
+            Este PR foi reaberto automaticamente pois novos commits foram adicionados a \`develop\`.
+
+            **Commit:** ${{ github.sha }}
+            **Autor:** @${{ github.actor }}`
+                });
+                
+                core.notice(`✅ PR #${prNumber} reaberto`);
+              }
+            } else {
+              console.log(`✅ PR #${prNumber} está aberto`);
+            }
+
+  # ============================================
+  # RESUMO DO RELEASE
+  # ============================================
+  release-summary:
+    name: Resumo do Release
+    needs: manage-release
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Generate Summary
+        run: |
+          echo "# 🚀 Release Management" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          ACTION="${{ needs.manage-release.outputs.action_taken }}"
+
+          if [ "$ACTION" == "created" ]; then
+            echo "## ✨ Nova Release Criada" >> $GITHUB_STEP_SUMMARY
+          elif [ "$ACTION" == "merged" ]; then
+            echo "## 🔄 Release Atualizada" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Valor |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Versão | ${{ needs.manage-release.outputs.release_version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch | ${{ needs.manage-release.outputs.release_branch }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Ação | ${{ needs.manage-release.outputs.action_taken }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| PR | [#${{ needs.manage-release.outputs.pr_number }}](${{ needs.manage-release.outputs.pr_url }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Autor | @${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$ACTION" == "created" ]; then
+            echo "### 📝 Próximos Passos" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "1. Revisar o Pull Request criado" >> $GITHUB_STEP_SUMMARY
+            echo "2. Verificar o Terraform Plan no CI" >> $GITHUB_STEP_SUMMARY
+            echo "3. Confirmar estimativa de custos" >> $GITHUB_STEP_SUMMARY
+            echo "4. Aprovar e mergear para \`main\` quando pronto" >> $GITHUB_STEP_SUMMARY
+          elif [ "$ACTION" == "merged" ]; then
+            echo "### 📝 Próximos Passos" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "1. Revisar as novas mudanças no PR existente" >> $GITHUB_STEP_SUMMARY
+            echo "2. Verificar se há conflitos" >> $GITHUB_STEP_SUMMARY
+            echo "3. Aprovar e mergear para \`main\` quando pronto" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "🔗 [Ver Pull Request](${{ needs.manage-release.outputs.pr_url }})" >> $GITHUB_STEP_SUMMARY

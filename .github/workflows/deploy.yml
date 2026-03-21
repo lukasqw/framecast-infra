@@ -1,0 +1,404 @@
+name: Deploy - Infraestrutura em Produção
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - "kubernetes/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Ambiente para deploy"
+        required: false
+        type: choice
+        options:
+          - production
+          - staging
+        default: production
+      auto_approve:
+        description: "Aprovar automaticamente o apply"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: deploy-${{ github.event.inputs.environment || 'production' }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  TF_VERSION: 1.7.0
+  NAMESPACE: app-oficina-tech
+  ENVIRONMENT: ${{ github.event.inputs.environment || 'production' }}
+  WORKING_DIR: terraform/environments/${{ github.event.inputs.environment || 'production' }}
+
+jobs:
+  # ============================================
+  # DEPLOY DA INFRAESTRUTURA
+  # ============================================
+  deploy:
+    name: Deploy Infraestrutura
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.event.inputs.environment || 'production' }}
+      url: http://${{ steps.outputs.outputs.alb_dns }}
+
+    outputs:
+      environment: ${{ env.ENVIRONMENT }}
+      rds_endpoint: ${{ steps.outputs.outputs.rds_endpoint }}
+      rds_port: ${{ steps.outputs.outputs.rds_port }}
+      rds_database: ${{ steps.outputs.outputs.rds_database }}
+      alb_dns: ${{ steps.outputs.outputs.alb_dns }}
+      alb_arn: ${{ steps.outputs.outputs.alb_arn }}
+      eks_cluster: ${{ steps.outputs.outputs.eks_cluster }}
+      eks_endpoint: ${{ steps.outputs.outputs.eks_endpoint }}
+      vpc_id: ${{ steps.outputs.outputs.vpc_id }}
+      deployed_at: ${{ steps.outputs.outputs.deployed_at }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          echo "🔧 Inicializando Terraform..."
+          terraform init
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          echo "📋 Gerando plano de execução..."
+          terraform plan -out=tfplan -no-color 2>&1 | tee plan.txt
+
+          # Extrair estatísticas
+          if grep -q "No changes" plan.txt; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "::notice::Nenhuma mudança detectada na infraestrutura"
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Terraform Apply
+        if: steps.plan.outputs.has_changes == 'true' || github.event.inputs.auto_approve == 'true'
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          echo "🚀 Aplicando mudanças na infraestrutura..."
+
+          if [ "${{ github.event.inputs.auto_approve }}" == "true" ] || [ "${{ github.event_name }}" == "push" ]; then
+            terraform apply -auto-approve tfplan
+          else
+            terraform apply tfplan
+          fi
+
+          echo "✅ Infraestrutura aplicada com sucesso!"
+
+      - name: Get Terraform Outputs
+        id: outputs
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          echo "📊 Coletando outputs da infraestrutura..."
+
+          # RDS
+          RDS_ENDPOINT=$(terraform output -raw rds_endpoint 2>/dev/null || echo "")
+          RDS_PORT=$(terraform output -raw rds_port 2>/dev/null || echo "5432")
+          RDS_DATABASE=$(terraform output -raw rds_database_name 2>/dev/null || echo "oficina_tech")
+
+          # ALB
+          ALB_DNS=$(terraform output -raw alb_dns_name 2>/dev/null || echo "")
+          ALB_ARN=$(terraform output -raw alb_arn 2>/dev/null || echo "")
+
+          # EKS
+          EKS_CLUSTER=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "")
+          EKS_ENDPOINT=$(terraform output -raw eks_cluster_endpoint 2>/dev/null || echo "")
+
+          # VPC
+          VPC_ID=$(terraform output -raw vpc_id 2>/dev/null || echo "")
+
+          # Timestamp
+          DEPLOYED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          # Exportar outputs
+          echo "rds_endpoint=$RDS_ENDPOINT" >> $GITHUB_OUTPUT
+          echo "rds_port=$RDS_PORT" >> $GITHUB_OUTPUT
+          echo "rds_database=$RDS_DATABASE" >> $GITHUB_OUTPUT
+          echo "alb_dns=$ALB_DNS" >> $GITHUB_OUTPUT
+          echo "alb_arn=$ALB_ARN" >> $GITHUB_OUTPUT
+          echo "eks_cluster=$EKS_CLUSTER" >> $GITHUB_OUTPUT
+          echo "eks_endpoint=$EKS_ENDPOINT" >> $GITHUB_OUTPUT
+          echo "vpc_id=$VPC_ID" >> $GITHUB_OUTPUT
+          echo "deployed_at=$DEPLOYED_AT" >> $GITHUB_OUTPUT
+
+          # Logs
+          echo "::notice::RDS: $RDS_ENDPOINT:$RDS_PORT/$RDS_DATABASE"
+          echo "::notice::ALB: $ALB_DNS"
+          echo "::notice::EKS: $EKS_CLUSTER"
+          echo "::notice::VPC: $VPC_ID"
+
+      - name: Update Kubeconfig
+        if: steps.outputs.outputs.eks_cluster != ''
+        run: |
+          echo "⚙️ Atualizando kubeconfig..."
+          aws eks update-kubeconfig \
+            --name ${{ steps.outputs.outputs.eks_cluster }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Apply Kubernetes Resources
+        if: steps.outputs.outputs.eks_cluster != ''
+        run: |
+          echo "☸️ Aplicando recursos Kubernetes..."
+
+          # Verificar se o diretório existe
+          if [ -d "kubernetes/overlays/${{ env.ENVIRONMENT }}" ]; then
+            kubectl apply -k kubernetes/overlays/${{ env.ENVIRONMENT }}
+          elif [ -d "kubernetes/overlay" ]; then
+            kubectl apply -k kubernetes/overlay
+          else
+            echo "⚠️ Diretório de overlays não encontrado"
+          fi
+
+      - name: Update ConfigMap
+        if: steps.outputs.outputs.eks_cluster != ''
+        continue-on-error: true
+        run: |
+          echo "🔧 Atualizando ConfigMap com dados da infraestrutura..."
+
+          kubectl create configmap oficina-tech-infra \
+            --from-literal=DB_HOST="${{ steps.outputs.outputs.rds_endpoint }}" \
+            --from-literal=DB_PORT="${{ steps.outputs.outputs.rds_port }}" \
+            --from-literal=DB_NAME="${{ steps.outputs.outputs.rds_database }}" \
+            --from-literal=ALB_DNS="${{ steps.outputs.outputs.alb_dns }}" \
+            -n ${{ env.NAMESPACE }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Save Infrastructure Outputs
+        run: |
+          echo "💾 Salvando outputs da infraestrutura..."
+
+          mkdir -p /tmp/infra-outputs
+
+          cat > /tmp/infra-outputs/${{ env.ENVIRONMENT }}.json <<EOF
+          {
+            "environment": "${{ env.ENVIRONMENT }}",
+            "rds": {
+              "endpoint": "${{ steps.outputs.outputs.rds_endpoint }}",
+              "port": "${{ steps.outputs.outputs.rds_port }}",
+              "database": "${{ steps.outputs.outputs.rds_database }}"
+            },
+            "alb": {
+              "dns": "${{ steps.outputs.outputs.alb_dns }}",
+              "arn": "${{ steps.outputs.outputs.alb_arn }}",
+              "url": "http://${{ steps.outputs.outputs.alb_dns }}"
+            },
+            "eks": {
+              "cluster_name": "${{ steps.outputs.outputs.eks_cluster }}",
+              "endpoint": "${{ steps.outputs.outputs.eks_endpoint }}"
+            },
+            "vpc": {
+              "id": "${{ steps.outputs.outputs.vpc_id }}"
+            },
+            "deployment": {
+              "deployed_at": "${{ steps.outputs.outputs.deployed_at }}",
+              "deployed_by": "${{ github.actor }}",
+              "commit_sha": "${{ github.sha }}",
+              "workflow_run": "${{ github.run_id }}"
+            }
+          }
+          EOF
+
+          echo "✅ Outputs salvos"
+
+      - name: Upload Outputs Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: infra-outputs-${{ env.ENVIRONMENT }}-${{ github.sha }}
+          path: /tmp/infra-outputs/${{ env.ENVIRONMENT }}.json
+          retention-days: 90
+
+      - name: Deploy Summary
+        run: |
+          echo "## 🚀 Deploy Concluído" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Infraestrutura" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Recurso | Valor |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Ambiente | ${{ env.ENVIRONMENT }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| VPC | ${{ steps.outputs.outputs.vpc_id }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| EKS Cluster | ${{ steps.outputs.outputs.eks_cluster }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| RDS Endpoint | ${{ steps.outputs.outputs.rds_endpoint }}:${{ steps.outputs.outputs.rds_port }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Database | ${{ steps.outputs.outputs.rds_database }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ALB DNS | ${{ steps.outputs.outputs.alb_dns }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔗 URLs" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Application:** http://${{ steps.outputs.outputs.alb_dns }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ℹ️ Deployment Info" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Valor |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Deployed At | ${{ steps.outputs.outputs.deployed_at }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deployed By | @${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Workflow | [#${{ github.run_number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================
+  # VERIFICAÇÃO PÓS-DEPLOY
+  # ============================================
+  post-deploy-check:
+    name: Verificação Pós-Deploy
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: success()
+
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check EKS Cluster Health
+        if: needs.deploy.outputs.eks_cluster != ''
+        run: |
+          echo "🏥 Verificando saúde do cluster EKS..."
+
+          aws eks update-kubeconfig \
+            --name ${{ needs.deploy.outputs.eks_cluster }} \
+            --region ${{ env.AWS_REGION }}
+
+          # Verificar nodes
+          echo "Nodes:"
+          kubectl get nodes
+
+          # Verificar pods
+          echo "Pods no namespace ${{ env.NAMESPACE }}:"
+          kubectl get pods -n ${{ env.NAMESPACE }} || echo "Namespace não encontrado"
+
+      - name: Check RDS Status
+        if: needs.deploy.outputs.rds_endpoint != ''
+        run: |
+          echo "🗄️ Verificando status do RDS..."
+
+          # Extrair identificador do RDS do endpoint
+          RDS_ID=$(echo "${{ needs.deploy.outputs.rds_endpoint }}" | cut -d'.' -f1)
+
+          aws rds describe-db-instances \
+            --db-instance-identifier "$RDS_ID" \
+            --query 'DBInstances[0].[DBInstanceStatus,Engine,EngineVersion]' \
+            --output table || echo "⚠️ Não foi possível verificar status do RDS"
+
+      - name: Check ALB Status
+        if: needs.deploy.outputs.alb_dns != ''
+        run: |
+          echo "⚖️ Verificando status do ALB..."
+
+          # Tentar fazer request para o ALB
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            --connect-timeout 10 \
+            --max-time 30 \
+            http://${{ needs.deploy.outputs.alb_dns }}/health || echo "000")
+
+          echo "HTTP Status Code: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" == "200" ] || [ "$HTTP_CODE" == "404" ]; then
+            echo "✅ ALB está respondendo"
+          else
+            echo "⚠️ ALB não está respondendo corretamente (código: $HTTP_CODE)"
+          fi
+
+      - name: Health Check Summary
+        run: |
+          echo "## 🏥 Verificação de Saúde" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Verificações pós-deploy executadas com sucesso." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ Componentes Verificados" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- EKS Cluster" >> $GITHUB_STEP_SUMMARY
+          echo "- RDS Database" >> $GITHUB_STEP_SUMMARY
+          echo "- Application Load Balancer" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================
+  # RESUMO FINAL
+  # ============================================
+  final-summary:
+    name: Resumo Final
+    needs: [deploy, post-deploy-check]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Generate Final Summary
+        run: |
+          echo "# 🎉 Deploy Finalizado" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Status dos jobs
+          echo "## 📊 Status dos Jobs" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Deploy | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Verificação Pós-Deploy | ${{ needs.post-deploy-check.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Principais dados
+          echo "## 🔑 Principais Dados" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Recurso | Valor |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Ambiente | ${{ needs.deploy.outputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| EKS Cluster | ${{ needs.deploy.outputs.eks_cluster }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| RDS | ${{ needs.deploy.outputs.rds_endpoint }}:${{ needs.deploy.outputs.rds_port }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Database | ${{ needs.deploy.outputs.rds_database }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ALB | ${{ needs.deploy.outputs.alb_dns }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| VPC | ${{ needs.deploy.outputs.vpc_id }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deploy Time | ${{ needs.deploy.outputs.deployed_at }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # URLs importantes
+          echo "## 🔗 URLs Importantes" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Application:** http://${{ needs.deploy.outputs.alb_dns }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **EKS Console:** https://console.aws.amazon.com/eks/home?region=${{ env.AWS_REGION }}#/clusters/${{ needs.deploy.outputs.eks_cluster }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **RDS Console:** https://console.aws.amazon.com/rds/home?region=${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Próximos passos
+          echo "## 📝 Próximos Passos" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "1. Verificar logs da aplicação" >> $GITHUB_STEP_SUMMARY
+          echo "2. Monitorar métricas no CloudWatch" >> $GITHUB_STEP_SUMMARY
+          echo "3. Validar endpoints da API" >> $GITHUB_STEP_SUMMARY
+          echo "4. Confirmar funcionamento completo" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "**Deployed by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Workflow:** [#${{ github.run_number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
