@@ -93,13 +93,15 @@ jobs:
           working_directory: ${{ env.WORKING_DIR }}
           soft_fail: true
           format: sarif
+          sarif_file: tfsec-results.sarif
           additional_args: --minimum-severity MEDIUM
 
       - name: Upload tfsec SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        if: always() && hashFiles('tfsec-results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        continue-on-error: true
         with:
-          sarif_file: tfsec.sarif
+          sarif_file: tfsec-results.sarif
 
       - name: Run Checkov
         id: checkov
@@ -109,13 +111,21 @@ jobs:
           framework: terraform
           soft_fail: true
           output_format: sarif
-          output_file_path: checkov.sarif
+          output_file_path: ./checkov-results.sarif
+
+      - name: Debug SARIF Files
+        if: always()
+        run: |
+          echo "🔍 Checking for SARIF files..."
+          ls -la *.sarif 2>/dev/null || echo "No SARIF files found in root"
+          find . -name "*.sarif" -type f 2>/dev/null || echo "No SARIF files found anywhere"
 
       - name: Upload Checkov SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        if: always() && hashFiles('checkov-results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        continue-on-error: true
         with:
-          sarif_file: checkov.sarif
+          sarif_file: checkov-results.sarif
 
       - name: Security Summary
         if: always()
