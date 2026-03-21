@@ -2,14 +2,8 @@
 provider "aws" {
   region = var.aws_region
 
-  default_tags {
-    tags = local.common_tags
-  }
-
-  # Ignore tags_all for security group rules (known provider issue)
-  ignore_tags {
-    key_prefixes = []
-  }
+  # Removed default_tags to avoid conflicts with security group rules
+  # Tags are applied directly in each resource instead
 }
 
 provider "kubernetes" {
