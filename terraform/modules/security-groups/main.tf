@@ -55,10 +55,6 @@ resource "aws_vpc_security_group_ingress_rule" "eks_https" {
   to_port           = 443
   ip_protocol       = "tcp"
   cidr_ipv4         = "0.0.0.0/0"
-
-  lifecycle {
-    ignore_changes = [tags, tags_all]
-  }
 }
 
 resource "aws_vpc_security_group_egress_rule" "eks_all" {
@@ -66,10 +62,6 @@ resource "aws_vpc_security_group_egress_rule" "eks_all" {
   description       = "Allow all outbound traffic"
   ip_protocol       = "-1"
   cidr_ipv4         = "0.0.0.0/0"
-
-  lifecycle {
-    ignore_changes = [tags, tags_all]
-  }
 }
 
 # RDS Security Group Rules
@@ -80,10 +72,6 @@ resource "aws_vpc_security_group_ingress_rule" "rds_from_eks" {
   to_port                      = var.rds_port
   ip_protocol                  = "tcp"
   referenced_security_group_id = aws_security_group.eks.id
-
-  lifecycle {
-    ignore_changes = [tags, tags_all]
-  }
 }
 
 resource "aws_vpc_security_group_ingress_rule" "rds_from_vpc" {
@@ -93,10 +81,6 @@ resource "aws_vpc_security_group_ingress_rule" "rds_from_vpc" {
   to_port           = var.rds_port
   ip_protocol       = "tcp"
   cidr_ipv4         = var.vpc_cidr
-
-  lifecycle {
-    ignore_changes = [tags, tags_all]
-  }
 }
 
 resource "aws_vpc_security_group_egress_rule" "rds_all" {
@@ -104,10 +88,6 @@ resource "aws_vpc_security_group_egress_rule" "rds_all" {
   description       = "Allow all outbound traffic"
   ip_protocol       = "-1"
   cidr_ipv4         = "0.0.0.0/0"
-
-  lifecycle {
-    ignore_changes = [tags, tags_all]
-  }
 }
 
 # ALB Security Group Rules
@@ -118,10 +98,6 @@ resource "aws_vpc_security_group_ingress_rule" "alb_http" {
   to_port           = 80
   ip_protocol       = "tcp"
   cidr_ipv4         = "0.0.0.0/0"
-
-  lifecycle {
-    ignore_changes = [tags, tags_all]
-  }
 }
 
 resource "aws_vpc_security_group_ingress_rule" "alb_https" {
@@ -131,10 +107,6 @@ resource "aws_vpc_security_group_ingress_rule" "alb_https" {
   to_port           = 443
   ip_protocol       = "tcp"
   cidr_ipv4         = "0.0.0.0/0"
-
-  lifecycle {
-    ignore_changes = [tags, tags_all]
-  }
 }
 
 resource "aws_vpc_security_group_egress_rule" "alb_all" {
@@ -142,8 +114,4 @@ resource "aws_vpc_security_group_egress_rule" "alb_all" {
   description       = "Allow all outbound traffic"
   ip_protocol       = "-1"
   cidr_ipv4         = "0.0.0.0/0"
-
-  lifecycle {
-    ignore_changes = [tags, tags_all]
-  }
 }
