@@ -32,7 +32,7 @@ module "eks" {
   instance_types  = [var.instance_type]
 
   tags = local.common_tags
-  
+
   node_tags = {
     Workload = "kubernetes-nodes"
     Scaling  = "auto"

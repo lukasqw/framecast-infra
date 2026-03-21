@@ -6,18 +6,18 @@ resource "aws_lb" "this" {
   security_groups    = var.security_groups
   subnets            = var.subnets
 
-  enable_deletion_protection = var.enable_deletion_protection
-  enable_http2               = var.enable_http2
+  enable_deletion_protection       = var.enable_deletion_protection
+  enable_http2                     = var.enable_http2
   enable_cross_zone_load_balancing = var.enable_cross_zone_load_balancing
 
   tags = merge(
     var.tags,
     {
-      Name         = var.name
-      ResourceType = "application-load-balancer"
-      Service      = "elb"
+      Name             = var.name
+      ResourceType     = "application-load-balancer"
+      Service          = "elb"
       LoadBalancerType = "application"
-      Internal     = tostring(var.internal)
+      Internal         = tostring(var.internal)
     }
   )
 }

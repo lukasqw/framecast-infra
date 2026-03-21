@@ -3,25 +3,25 @@ locals {
   # FinOps Tags - Seguindo AWS Tagging Best Practices
   finops_tags = {
     # Identificação
-    Environment   = var.environment
-    Project       = var.project_name
-    Application   = var.application
-    Microservice  = var.microservice
-    
+    Environment  = var.environment
+    Project      = var.project_name
+    Application  = var.application
+    Microservice = var.microservice
+
     # Financeiro
-    CostCenter    = var.cost_center
-    BusinessUnit  = var.business_unit
-    BudgetCode    = var.budget_code != "" ? var.budget_code : "not-set"
-    
+    CostCenter   = var.cost_center
+    BusinessUnit = var.business_unit
+    BudgetCode   = var.budget_code != "" ? var.budget_code : "not-set"
+
     # Governança
-    Owner         = var.owner
-    ManagedBy     = "Terraform"
-    IaC           = "true"
-    
+    Owner     = var.owner
+    ManagedBy = "Terraform"
+    IaC       = "true"
+
     # Lifecycle
-    CreatedDate   = formatdate("YYYY-MM-DD", timestamp())
+    CreatedDate    = formatdate("YYYY-MM-DD", timestamp())
     ExpirationDate = var.expiration_date != "" ? var.expiration_date : "permanent"
-    
+
     # Compliance
     DataClassification = "internal"
     Compliance         = "required"
