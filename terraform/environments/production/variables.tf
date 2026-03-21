@@ -15,7 +15,7 @@ variable "project_name" {
 variable "eks_cluster_version" {
   description = "Versão do Kubernetes"
   type        = string
-  default     = "1.28"
+  default     = "1.31"
 }
 
 variable "access_config" {
