@@ -5,6 +5,11 @@ provider "aws" {
   default_tags {
     tags = local.common_tags
   }
+
+  # Ignore tags_all for security group rules (known provider issue)
+  ignore_tags {
+    key_prefixes = []
+  }
 }
 
 provider "kubernetes" {
