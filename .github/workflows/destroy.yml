@@ -1,0 +1,193 @@
+name: Destroy Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type "DESTROY" to confirm'
+        required: true
+        type: string
+      reason:
+        description: "Reason for destruction"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+concurrency:
+  group: terraform-destroy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  TF_VERSION: 1.7.0
+  NAMESPACE: app-oficina-tech
+
+jobs:
+  validate-input:
+    name: Validate Destruction Request
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirmation }}" != "DESTROY" ]; then
+            echo "::error::Confirmation text must be exactly 'DESTROY'"
+            exit 1
+          fi
+
+      - name: Create Issue for Audit
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🔥 Infrastructure Destruction`,
+              body: `## Infrastructure Destruction Request
+              
+              **Requested by:** @${{ github.actor }}
+              **Reason:** ${{ github.event.inputs.reason }}
+              **Timestamp:** ${new Date().toISOString()}
+              **Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+              
+              ---
+              
+              This issue serves as an audit trail for infrastructure destruction.
+              `,
+              labels: ['infrastructure', 'destruction', 'audit']
+            });
+
+            console.log(`Created audit issue: #${issue.data.number}`);
+
+  backup:
+    name: Backup State
+    needs: validate-input
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Backup State
+        working-directory: terraform
+        run: |
+          terraform state pull > /tmp/terraform-state-backup.json
+
+      - name: Upload State Backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-state-backup-${{ github.run_id }}
+          path: /tmp/terraform-state-backup.json
+          retention-days: 90
+
+      - name: Export Resources List
+        working-directory: terraform
+        run: |
+          terraform state list > /tmp/resources-list.txt
+
+      - name: Upload Resources List
+        uses: actions/upload-artifact@v4
+        with:
+          name: resources-list-${{ github.run_id }}
+          path: /tmp/resources-list.txt
+          retention-days: 90
+
+  destroy:
+    name: Destroy Infrastructure
+    needs: backup
+    runs-on: ubuntu-latest
+    environment:
+      name: production-destroy
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Delete Kubernetes Resources First
+        continue-on-error: true
+        run: |
+          EKS_CLUSTER=$(cd terraform && terraform output -raw eks_cluster_name 2>/dev/null || echo "")
+
+          if [ -n "$EKS_CLUSTER" ]; then
+            aws eks update-kubeconfig --name $EKS_CLUSTER --region ${{ env.AWS_REGION }}
+            kubectl delete -k kubernetes/overlay --ignore-not-found=true
+            echo "::notice::Kubernetes resources deleted"
+          fi
+
+      - name: Terraform Destroy
+        working-directory: terraform
+        run: |
+          terraform destroy -auto-approve
+          echo "::notice::Infrastructure destroyed successfully"
+
+      - name: Verify Destruction
+        run: |
+          echo "::notice::Verifying all resources are destroyed..."
+
+  notify:
+    name: Notify Destruction
+    needs: destroy
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Send Email Notification
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_HOST }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "[ALERT] Infrastructure Destroyed"
+          to: ${{ secrets.ALERT_EMAIL }}
+          from: ${{ secrets.SMTP_FROM }}
+          body: |
+            Infrastructure destruction completed.
+
+            Status: ${{ needs.destroy.result }}
+            Requested by: ${{ github.actor }}
+            Reason: ${{ github.event.inputs.reason }}
+            Timestamp: ${{ github.event.head_commit.timestamp }}
+
+            Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

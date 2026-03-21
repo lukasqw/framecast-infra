@@ -1,0 +1,93 @@
+# ========================================
+# Configuração Obrigatória
+# ========================================
+
+# Senha do banco de dados RDS (OBRIGATÓRIO)
+db_password = "SuaSenhaSegura123!"
+
+# ========================================
+# Configuração Geral
+# ========================================
+
+# Região AWS
+aws_region = "us-east-1"
+
+# Nome do projeto
+project_name = "EKS-OFICINA-TECH"
+
+# ========================================
+# Configuração EKS
+# ========================================
+
+# Versão do Kubernetes
+eks_cluster_version = "1.28"
+
+# Modo de autenticação
+access_config = "API_AND_CONFIG_MAP"
+
+# Node Group
+node_group        = "oficina_tech"
+instance_type     = "t3.medium"
+node_desired_size = 2
+node_max_size     = 3
+node_min_size     = 1
+
+# ========================================
+# Configuração RDS
+# ========================================
+
+# Versão do PostgreSQL
+rds_engine_version = "16"
+
+# Classe da instância
+rds_instance_class = "db.t3.micro"
+
+# Storage
+rds_allocated_storage = 20
+
+# Backup
+rds_backup_retention_period = 7
+
+# Multi-AZ (false para dev/test, true para produção)
+rds_multi_az = false
+
+# Proteções (ajuste para produção)
+rds_skip_final_snapshot = true
+rds_deletion_protection = false
+
+# ========================================
+# AWS Academy / Lab (Opcional)
+# ========================================
+
+# Descomente e configure se estiver usando AWS Academy
+# lab_role = "arn:aws:iam::ACCOUNT_ID:role/LabRole"
+# principal_arn = "arn:aws:iam::ACCOUNT_ID:role/voclabs/EMRDefaultRole"
+
+# ========================================
+# FinOps Tags (Gestão de Custos)
+# ========================================
+
+# Centro de custo
+cost_center = "engineering"
+
+# Unidade de negócio
+business_unit = "technology"
+
+# Ambiente
+environment = "production"
+
+# Responsável
+owner = "devops-team"
+
+# Aplicação
+application = "oficina-tech"
+
+# Microserviço (shared para recursos compartilhados)
+# Valores possíveis: shared, api, frontend, worker, etc
+microservice = "shared"
+
+# Código do orçamento (opcional)
+# budget_code = "PROJ-2024-001"
+
+# Data de expiração (opcional, formato: YYYY-MM-DD)
+# expiration_date = "2024-12-31"
