@@ -658,80 +658,11 @@ jobs:
     needs:
       [
         calculate-version,
-        create-release,
-        generate-changelog,
-        create-github-release,
-        create-release-issue,
-      ]
-    runs-on: ubuntu-latest
-    if: always()
-
-    steps:
-      - name: Gerar Resumo Final
-        run: |
-          if [ "${{ needs.calculate-version.outputs.has_changes }}" != "true" ]; then
-            echo "# ℹ️ Nenhuma Release Criada" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "Nenhuma mudança detectada desde a última release." >> $GITHUB_STEP_SUMMARY
-            exit 0
-          fi
-
-          echo "# 🎉 Release Criada Automaticamente" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Status dos jobs
-          echo "## 📊 Status dos Jobs" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Cálculo de Versão | ${{ needs.calculate-version.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Criação de Tag/Branch | ${{ needs.create-release.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Changelog | ${{ needs.generate-changelog.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| GitHub Release | ${{ needs.create-github-release.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Issue | ${{ needs.create-release-issue.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Informações da release
-          echo "## 📋 Informações da Release" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Item | Valor |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Versão Anterior | ${{ needs.calculate-version.outputs.previous_version }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Nova Versão | ${{ needs.calculate-version.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Tipo de Bump | ${{ needs.calculate-version.outputs.bump_type }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Branch | release/${{ needs.calculate-version.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Release URL | ${{ needs.create-github-release.outputs.release_url }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Criado por | @${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Próximos passos
-          echo "## 📝 Próximos Passos" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "1. Revisar changelog e release notes" >> $GITHUB_STEP_SUMMARY
-          echo "2. Validar mudanças na branch de release" >> $GITHUB_STEP_SUMMARY
-          echo "3. Executar deploy em staging" >> $GITHUB_STEP_SUMMARY
-          echo "4. Validar em staging" >> $GITHUB_STEP_SUMMARY
-          echo "5. Executar deploy em produção" >> $GITHUB_STEP_SUMMARY
-          echo "6. Monitorar métricas e logs" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "**🔗 Links:**" >> $GITHUB_STEP_SUMMARY
-          echo "- [Release](${{ needs.create-github-release.outputs.release_url }})" >> $GITHUB_STEP_SUMMARY
-          echo "- [Branch de Release](https://github.com/${{ github.repository }}/tree/release/${{ needs.calculate-version.outputs.version }})" >> $GITHUB_STEP_SUMMARY
-
-  # ============================================
-  # RESUMO FINAL
-  # ============================================
-  final-summary:
-    name: Resumo Final
-    needs:
-      [
-        calculate-version,
         create-release-candidate,
         finalize-release,
         generate-changelog,
         create-github-release,
-        create-release-issue
+        create-release-issue,
       ]
     runs-on: ubuntu-latest
     if: always()
@@ -782,11 +713,11 @@ jobs:
           echo "| Nova Versão | ${{ needs.calculate-version.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Tipo de Bump | ${{ needs.calculate-version.outputs.bump_type }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Branch | ${{ github.ref_name }} |" >> $GITHUB_STEP_SUMMARY
-          
+
           if [ "${{ needs.create-github-release.outputs.release_url }}" != "" ]; then
             echo "| Release URL | ${{ needs.create-github-release.outputs.release_url }} |" >> $GITHUB_STEP_SUMMARY
           fi
-          
+
           echo "| Criado por | @${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
@@ -809,7 +740,7 @@ jobs:
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
-          
+
           if [ "${{ needs.create-github-release.outputs.release_url }}" != "" ]; then
             echo "**🔗 Links:**" >> $GITHUB_STEP_SUMMARY
             echo "- [Release](${{ needs.create-github-release.outputs.release_url }})" >> $GITHUB_STEP_SUMMARY
