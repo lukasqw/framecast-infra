@@ -2,6 +2,7 @@
 
 Este repositório contém a infraestrutura como código (IaC) para o projeto EKS Oficina Tech, utilizando Terraform para provisionar recursos na AWS.
 
+
 ## Estrutura do Projeto
 
 ```
