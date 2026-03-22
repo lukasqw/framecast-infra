@@ -347,13 +347,22 @@ jobs:
             core.setOutput('pr_number', pr.number);
             core.notice(`PR criado: ${pr.html_url}`);
 
+            // Aguardar um momento para o PR ser processado completamente
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
             // Adicionar labels
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: pr.number,
-              labels: ['release', version, 'automated']
-            });
+            try {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: ['release', version, 'automated']
+              });
+              console.log('✅ Labels adicionadas com sucesso');
+            } catch (error) {
+              console.log(`⚠️ Erro ao adicionar labels: ${error.message}`);
+              core.warning(`Não foi possível adicionar labels: ${error.message}`);
+            }
 
       - name: Resumo
         run: |
