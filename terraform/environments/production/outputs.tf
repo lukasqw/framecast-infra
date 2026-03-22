@@ -28,6 +28,24 @@ output "eks_cluster_version" {
   value       = module.eks.cluster_version
 }
 
+output "eks_access_entries" {
+  description = "Access entries configuradas no cluster"
+  value = concat(
+    [for entry in aws_eks_access_entry.lab_access : {
+      principal_arn = entry.principal_arn
+      type          = entry.type
+    }],
+    [for entry in aws_eks_access_entry.additional_users : {
+      principal_arn = entry.principal_arn
+      type          = entry.type
+    }],
+    [for entry in aws_eks_access_entry.additional_roles : {
+      principal_arn = entry.principal_arn
+      type          = entry.type
+    }]
+  )
+}
+
 # RDS Outputs
 output "rds_endpoint" {
   description = "Endpoint do RDS (host:port)"

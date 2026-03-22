@@ -1,93 +1,102 @@
-# ========================================
-# Configuração Obrigatória
-# ========================================
+# Configuração de Exemplo - Production Environment
+# Copie este arquivo para terraform.tfvars e preencha com seus valores
+
+# ============================================================================
+# CONFIGURAÇÕES OBRIGATÓRIAS
+# ============================================================================
 
 # Senha do banco de dados RDS (OBRIGATÓRIO)
 db_password = "SuaSenhaSegura123!"
 
-# ========================================
-# Configuração Geral
-# ========================================
+# ============================================================================
+# AWS ACADEMY / LEARNER LAB
+# ============================================================================
 
-# Região AWS
-aws_region = "us-east-1"
+# ARN do principal (usuário ou role) que criou o cluster
+# Para descobrir: aws sts get-caller-identity
+principal_arn = "arn:aws:iam::730335587750:user/awsstudent"
 
-# Nome do projeto
+# ARN da LabRole (AWS Academy)
+lab_role = "arn:aws:iam::730335587750:role/LabRole"
+
+# ============================================================================
+# CONFIGURAÇÃO DE ACESSO AO EKS
+# ============================================================================
+
+# Usuários IAM adicionais que precisam acessar o cluster
+additional_users = [
+  {
+    userarn  = "arn:aws:iam::730335587750:user/developer1"
+    username = "developer1"
+    groups   = ["system:masters"]  # Admin completo
+  },
+  {
+    userarn  = "arn:aws:iam::730335587750:user/developer2"
+    username = "developer2"
+    groups   = ["developers"]  # Permissões de edição
+  },
+  {
+    userarn  = "arn:aws:iam::730335587750:user/viewer"
+    username = "viewer"
+    groups   = ["readonly"]  # Apenas visualização
+  }
+]
+
+# Roles IAM adicionais que precisam acessar o cluster
+additional_roles = [
+  {
+    rolearn  = "arn:aws:iam::730335587750:role/DevOpsRole"
+    username = "devops-role"
+    groups   = ["system:masters"]
+  }
+]
+
+# ============================================================================
+# CONFIGURAÇÕES GERAIS
+# ============================================================================
+
+aws_region   = "us-east-1"
 project_name = "EKS-OFICINA-TECH"
 
-# ========================================
-# Configuração EKS
-# ========================================
+# ============================================================================
+# CONFIGURAÇÕES DO EKS
+# ============================================================================
 
-# Versão do Kubernetes
-eks_cluster_version = "1.28"
-
-# Modo de autenticação
-access_config = "API_AND_CONFIG_MAP"
+eks_cluster_version = "1.31"
+access_config       = "API_AND_CONFIG_MAP"  # Suporta ambos os métodos de autenticação
 
 # Node Group
 node_group        = "oficina_tech"
 instance_type     = "t3.medium"
-node_desired_size = 2
-node_max_size     = 3
+node_desired_size = 1
+node_max_size     = 2
 node_min_size     = 1
 
-# ========================================
-# Configuração RDS
-# ========================================
+# ============================================================================
+# CONFIGURAÇÕES DO RDS
+# ============================================================================
 
-# Versão do PostgreSQL
-rds_engine_version = "16"
+rds_engine_version          = "16"
+rds_instance_class          = "db.t3.micro"
+rds_allocated_storage       = 20
+rds_backup_retention_period = 1
+rds_multi_az                = false
+rds_skip_final_snapshot     = true
+rds_deletion_protection     = false
 
-# Classe da instância
-rds_instance_class = "db.t3.micro"
+# ============================================================================
+# FINOPS - TAGS DE CUSTO
+# ============================================================================
 
-# Storage
-rds_allocated_storage = 20
-
-# Backup
-rds_backup_retention_period = 7
-
-# Multi-AZ (false para dev/test, true para produção)
-rds_multi_az = false
-
-# Proteções (ajuste para produção)
-rds_skip_final_snapshot = true
-rds_deletion_protection = false
-
-# ========================================
-# AWS Academy / Lab (Opcional)
-# ========================================
-
-# Descomente e configure se estiver usando AWS Academy
-# lab_role = "arn:aws:iam::ACCOUNT_ID:role/LabRole"
-# principal_arn = "arn:aws:iam::ACCOUNT_ID:role/voclabs/EMRDefaultRole"
-
-# ========================================
-# FinOps Tags (Gestão de Custos)
-# ========================================
-
-# Centro de custo
-cost_center = "engineering"
-
-# Unidade de negócio
+cost_center   = "engineering"
 business_unit = "technology"
+environment   = "production"
+owner         = "devops-team"
+application   = "oficina-tech"
+microservice  = "shared"
 
-# Ambiente
-environment = "production"
-
-# Responsável
-owner = "devops-team"
-
-# Aplicação
-application = "oficina-tech"
-
-# Microserviço (shared para recursos compartilhados)
-# Valores possíveis: shared, api, frontend, worker, etc
-microservice = "shared"
-
-# Código do orçamento (opcional)
+# Opcional: Código do orçamento
 # budget_code = "PROJ-2024-001"
 
-# Data de expiração (opcional, formato: YYYY-MM-DD)
+# Opcional: Data de expiração (YYYY-MM-DD)
 # expiration_date = "2024-12-31"
