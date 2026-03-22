@@ -65,6 +65,7 @@ A infraestrutura é organizada em módulos reutilizáveis:
 
 - Terraform >= 1.0
 - AWS CLI configurado
+- kubectl instalado
 - Credenciais AWS com permissões adequadas
 
 ### 2. Configurar Variáveis
@@ -82,29 +83,59 @@ Edite `terraform.tfvars` com suas configurações. Principais variáveis:
 # Obrigatório
 db_password = "sua_senha_segura"
 
+# Obrigatório para acesso ao EKS
+principal_arn = "arn:aws:iam::730335587750:user/awsstudent"
+
 # Configurações opcionais (já têm valores padrão)
 aws_region          = "us-east-1"
 project_name        = "EKS-OFICINA-TECH"
-eks_cluster_version = "1.28"
+eks_cluster_version = "1.31"
 rds_instance_class  = "db.t3.micro"
 ```
 
-### 3. Inicializar Terraform
+### 3. Descobrir seu ARN (AWS Academy)
+
+```bash
+aws sts get-caller-identity
+```
+
+Use o ARN retornado na variável `principal_arn`.
+
+### 4. Inicializar Terraform
 
 ```bash
 terraform init
 ```
 
-### 4. Planejar Mudanças
+### 5. Planejar Mudanças
 
 ```bash
 terraform plan
 ```
 
-### 5. Aplicar Infraestrutura
+### 6. Aplicar Infraestrutura
 
 ```bash
 terraform apply
+```
+
+### 7. Configurar Acesso ao Cluster EKS
+
+O Terraform detecta automaticamente seu usuário/role e configura o acesso ao cluster:
+
+```bash
+# Configurar kubectl
+aws eks update-kubeconfig --name EKS-OFICINA-TECH --region us-east-1
+
+# Testar acesso
+kubectl get nodes
+```
+
+O Terraform já configurou seu acesso automaticamente! Para ver quem foi detectado:
+
+```bash
+cd terraform/environments/production
+terraform output current_caller_info
 ```
 
 ## GitHub Actions - CI/CD
@@ -240,6 +271,27 @@ Consulte o [Guia de FinOps](terraform/FINOPS_GUIDE.md) para mais detalhes sobre:
 - Relatórios de custo no AWS Cost Explorer
 - Otimização de custos
 - Políticas de governança
+
+## Integração com Repositório da API
+
+Após criar a infraestrutura, você precisa configurar o repositório da API para fazer deploy no EKS.
+
+### Exportar Outputs para a API
+
+```bash
+./scripts/export-outputs.sh
+```
+
+Este script gera os valores necessários para configurar como GitHub Secrets no repositório da API.
+
+### Documentação Completa
+
+- **[Quick Start](docs/QUICK_START.md)** - Início rápido com detecção automática de usuário
+- **[Fluxo Automático](docs/AUTO_ACCESS_FLOW.md)** - Como funciona a detecção automática
+- **[Integração com API](docs/API_TO_EKS_GUIDE.md)** - Como a API acessa o cluster
+- **[Exemplo de Workflow](docs/API_WORKFLOW_EXAMPLE.yml)** - Workflow pronto para copiar
+- **[Configuração de Secrets](docs/SECRETS_SETUP.md)** - Como transferir outputs entre repositórios
+- **[Diagrama de Arquitetura](docs/ARCHITECTURE_DIAGRAM.md)** - Visão geral completa
 
 ## Suporte
 

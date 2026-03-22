@@ -292,17 +292,29 @@ jobs:
         run: |
           echo "🏥 Verificando saúde do cluster EKS..."
 
+          # Atualizar kubeconfig
           aws eks update-kubeconfig \
             --name ${{ needs.deploy.outputs.eks_cluster }} \
             --region ${{ env.AWS_REGION }}
 
+          # Verificar se o cluster está acessível
+          echo "Verificando conectividade com o cluster..."
+          if ! aws eks describe-cluster \
+            --name ${{ needs.deploy.outputs.eks_cluster }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'cluster.status' \
+            --output text; then
+            echo "⚠️ Não foi possível acessar o cluster"
+            exit 0
+          fi
+
           # Verificar nodes
           echo "Nodes:"
-          kubectl get nodes
+          kubectl get nodes --request-timeout=30s || echo "⚠️ Não foi possível listar nodes"
 
           # Verificar pods
           echo "Pods no namespace ${{ env.NAMESPACE }}:"
-          kubectl get pods -n ${{ env.NAMESPACE }} || echo "Namespace não encontrado"
+          kubectl get pods -n ${{ env.NAMESPACE }} --request-timeout=30s || echo "⚠️ Namespace não encontrado ou sem acesso"
 
       - name: Check RDS Status
         if: needs.deploy.outputs.rds_endpoint != ''

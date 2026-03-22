@@ -33,6 +33,13 @@ locals {
   # Lab role ARN (AWS Academy)
   lab_role_arn = var.lab_role != "" ? var.lab_role : "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/LabRole"
 
+  # Caller identity for aws-auth ConfigMap
+  caller_arn      = data.aws_caller_identity.current.arn
+  caller_username = element(split("/", data.aws_caller_identity.current.arn), length(split("/", data.aws_caller_identity.current.arn)) - 1)
+  is_user         = can(regex(":user/", data.aws_caller_identity.current.arn))
+  is_role         = can(regex(":role/", data.aws_caller_identity.current.arn))
+  account_id      = data.aws_caller_identity.current.account_id
+
   # Multiple subnets across AZs (required by AWS - minimum 2 AZs)
   # AWS requires at least 2 AZs for EKS, RDS, and ALB
   filtered_subnet_ids = [

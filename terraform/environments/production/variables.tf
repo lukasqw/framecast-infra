@@ -122,6 +122,27 @@ variable "policy_arn" {
   default     = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
 }
 
+# EKS Access Configuration
+variable "additional_users" {
+  description = "Lista de usuários IAM adicionais para acesso ao cluster"
+  type = list(object({
+    userarn  = string
+    username = string
+    groups   = list(string)
+  }))
+  default = []
+}
+
+variable "additional_roles" {
+  description = "Lista de roles IAM adicionais para acesso ao cluster"
+  type = list(object({
+    rolearn  = string
+    username = string
+    groups   = list(string)
+  }))
+  default = []
+}
+
 # FinOps Tags
 variable "cost_center" {
   description = "Centro de custo para FinOps"

@@ -76,30 +76,3 @@ module "alb" {
 
   tags = local.common_tags
 }
-
-# EKS Access Entry (AWS Academy)
-resource "aws_eks_access_entry" "lab_access" {
-  count = var.principal_arn != "" ? 1 : 0
-
-  cluster_name      = module.eks.cluster_name
-  principal_arn     = var.principal_arn
-  kubernetes_groups = []
-  type              = "STANDARD"
-
-  depends_on = [module.eks]
-}
-
-# EKS Access Policy (AWS Academy)
-resource "aws_eks_access_policy_association" "lab_policy" {
-  count = var.principal_arn != "" ? 1 : 0
-
-  cluster_name  = module.eks.cluster_name
-  principal_arn = var.principal_arn
-  policy_arn    = var.policy_arn
-
-  access_scope {
-    type = "cluster"
-  }
-
-  depends_on = [aws_eks_access_entry.lab_access]
-}
