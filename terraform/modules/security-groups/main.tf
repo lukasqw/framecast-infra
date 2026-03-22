@@ -67,7 +67,7 @@ resource "aws_vpc_security_group_egress_rule" "eks_all" {
 # RDS Security Group Rules
 resource "aws_vpc_security_group_ingress_rule" "rds_from_eks" {
   security_group_id            = aws_security_group.rds.id
-  description                  = "PostgreSQL from EKS"
+  description                  = "PostgreSQL from EKS cluster security group"
   from_port                    = var.rds_port
   to_port                      = var.rds_port
   ip_protocol                  = "tcp"
@@ -76,7 +76,7 @@ resource "aws_vpc_security_group_ingress_rule" "rds_from_eks" {
 
 resource "aws_vpc_security_group_ingress_rule" "rds_from_vpc" {
   security_group_id = aws_security_group.rds.id
-  description       = "PostgreSQL from VPC"
+  description       = "PostgreSQL from VPC CIDR (allows pods to connect)"
   from_port         = var.rds_port
   to_port           = var.rds_port
   ip_protocol       = "tcp"

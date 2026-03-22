@@ -1,4 +1,27 @@
 # RDS PostgreSQL Module
+
+# Parameter Group para configurar SSL
+resource "aws_db_parameter_group" "this" {
+  name   = "${var.identifier}-params"
+  family = "postgres${split(".", var.engine_version)[0]}"
+
+  # Permitir conexões sem SSL (para desenvolvimento)
+  # Em produção, considere manter SSL obrigatório
+  parameter {
+    name  = "rds.force_ssl"
+    value = "0"
+  }
+
+  tags = merge(
+    var.tags,
+    {
+      Name         = "${var.identifier}-params"
+      ResourceType = "db-parameter-group"
+      Service      = "rds"
+    }
+  )
+}
+
 resource "aws_db_subnet_group" "this" {
   name       = "${var.identifier}-subnet-group"
   subnet_ids = var.subnet_ids
@@ -30,6 +53,7 @@ resource "aws_db_instance" "this" {
   port     = var.port
 
   db_subnet_group_name   = aws_db_subnet_group.this.name
+  parameter_group_name   = aws_db_parameter_group.this.name
   vpc_security_group_ids = var.vpc_security_group_ids
   publicly_accessible    = var.publicly_accessible
 
