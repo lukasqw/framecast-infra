@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aws-auth
+  namespace: kube-system
+data:
+  # Roles IAM que podem acessar o cluster
+  mapRoles: |
+    - rolearn: arn:aws:iam::ACCOUNT_ID:role/LabRole
+      username: system:node:{{EC2PrivateDNSName}}
+      groups:
+        - system:bootstrappers
+        - system:nodes
+
+  # Usuários IAM que podem acessar o cluster
+  # NOTA: Use o script ./scripts/apply-aws-auth.sh para aplicar automaticamente
+  # O script detectará seu usuário AWS atual e aplicará as permissões
+  mapUsers: |
+    - userarn: USER_ARN_PLACEHOLDER
+      username: USER_NAME_PLACEHOLDER
+      groups:
+        - system:masters
