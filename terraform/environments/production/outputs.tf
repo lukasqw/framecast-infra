@@ -31,15 +31,13 @@ output "eks_cluster_version" {
 output "eks_access_entries" {
   description = "Access entries configuradas no cluster"
   value = concat(
+    # Current caller
+    [{
+      principal_arn = aws_eks_access_entry.current_caller.principal_arn
+      type          = aws_eks_access_entry.current_caller.type
+    }],
+    # Lab access (se configurado)
     [for entry in aws_eks_access_entry.lab_access : {
-      principal_arn = entry.principal_arn
-      type          = entry.type
-    }],
-    [for entry in aws_eks_access_entry.additional_users : {
-      principal_arn = entry.principal_arn
-      type          = entry.type
-    }],
-    [for entry in aws_eks_access_entry.additional_roles : {
       principal_arn = entry.principal_arn
       type          = entry.type
     }]
