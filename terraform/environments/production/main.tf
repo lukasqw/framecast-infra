@@ -76,3 +76,22 @@ module "alb" {
 
   tags = local.common_tags
 }
+
+# Regra adicional: Permitir que o Security Group do cluster EKS acesse o RDS
+# Esta regra é necessária porque o EKS cria automaticamente um Security Group para os nodes
+resource "aws_vpc_security_group_ingress_rule" "rds_from_eks_cluster_nodes" {
+  security_group_id            = module.security_groups.rds_security_group_id
+  description                  = "PostgreSQL from EKS cluster nodes (auto-created cluster SG)"
+  from_port                    = 5432
+  to_port                      = 5432
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = module.eks.cluster_security_group_id
+
+  tags = merge(
+    local.common_tags,
+    {
+      Name    = "${var.project_name}-rds-from-eks-nodes"
+      Purpose = "allow-eks-nodes-to-rds"
+    }
+  )
+}
