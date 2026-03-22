@@ -288,6 +288,8 @@ Este script gera os valores necessários para configurar como GitHub Secrets no 
 
 - **[Quick Start](docs/QUICK_START.md)** - Início rápido com detecção automática de usuário
 - **[Fluxo Automático](docs/AUTO_ACCESS_FLOW.md)** - Como funciona a detecção automática
+- **[AWS Academy Fix](docs/AWS_ACADEMY_FIX.md)** - Correção para assumed-role ARN
+- **[RDS Connectivity](docs/RDS_CONNECTIVITY_FIX.md)** - Conectividade entre pods e RDS
 - **[Integração com API](docs/API_TO_EKS_GUIDE.md)** - Como a API acessa o cluster
 - **[Exemplo de Workflow](docs/API_WORKFLOW_EXAMPLE.yml)** - Workflow pronto para copiar
 - **[Configuração de Secrets](docs/SECRETS_SETUP.md)** - Como transferir outputs entre repositórios
