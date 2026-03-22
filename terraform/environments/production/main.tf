@@ -81,18 +81,8 @@ module "alb" {
   tags = local.common_tags
 }
 
-# AWS Load Balancer Controller (via Helm)
-module "alb_controller" {
-  source = "../../modules/alb-controller"
-
-  cluster_name             = module.eks.cluster_name
-  cluster_endpoint         = module.eks.cluster_endpoint
-  service_account_role_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/LabRole"
-  aws_region               = var.aws_region
-  vpc_id                   = data.aws_vpc.main.id
-
-  depends_on = [module.eks]
-}
+# AWS Load Balancer Controller: instalado via kubectl no deploy workflow da aplicação
+# (removido do Terraform para evitar problemas de permissão com Helm provider no AWS Academy)
 
 # Regra adicional: Permitir que o Security Group do cluster EKS acesse o RDS
 # Esta regra é necessária porque o EKS cria automaticamente um Security Group para os nodes
