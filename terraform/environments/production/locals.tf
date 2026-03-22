@@ -34,10 +34,23 @@ locals {
   lab_role_arn = var.lab_role != "" ? var.lab_role : "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/LabRole"
 
   # Caller identity for aws-auth ConfigMap
-  caller_arn      = data.aws_caller_identity.current.arn
-  caller_username = element(split("/", data.aws_caller_identity.current.arn), length(split("/", data.aws_caller_identity.current.arn)) - 1)
-  is_user         = can(regex(":user/", data.aws_caller_identity.current.arn))
-  is_role         = can(regex(":role/", data.aws_caller_identity.current.arn))
+  # Converter assumed-role ARN para role ARN (AWS Academy)
+  # Exemplo: arn:aws:sts::123:assumed-role/voclabs/user123 -> arn:aws:iam::123:role/voclabs
+  raw_caller_arn = data.aws_caller_identity.current.arn
+
+  # Detectar se é assumed-role
+  is_assumed_role = can(regex(":assumed-role/", local.raw_caller_arn))
+
+  # Extrair o nome da role do assumed-role ARN
+  # arn:aws:sts::123:assumed-role/voclabs/user123 -> voclabs
+  assumed_role_name = local.is_assumed_role ? element(split("/", local.raw_caller_arn), length(split("/", local.raw_caller_arn)) - 2) : ""
+
+  # Converter para role ARN se for assumed-role, senão usar o ARN original
+  caller_arn = local.is_assumed_role ? "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.assumed_role_name}" : local.raw_caller_arn
+
+  caller_username = element(split("/", local.caller_arn), length(split("/", local.caller_arn)) - 1)
+  is_user         = can(regex(":user/", local.caller_arn))
+  is_role         = can(regex(":role/", local.caller_arn)) || local.is_assumed_role
   account_id      = data.aws_caller_identity.current.account_id
 
   # Multiple subnets across AZs (required by AWS - minimum 2 AZs)

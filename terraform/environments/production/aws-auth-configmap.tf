@@ -18,10 +18,12 @@
 output "current_caller_info" {
   description = "Informações do usuário/role atual executando o Terraform"
   value = {
+    raw_arn  = local.raw_caller_arn
     arn      = local.caller_arn
     username = local.caller_username
     type     = local.is_user ? "user" : (local.is_role ? "role" : "unknown")
     account  = local.account_id
+    note     = local.is_assumed_role ? "Converted from assumed-role to role ARN" : "Using original ARN"
   }
 }
 
