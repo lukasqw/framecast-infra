@@ -134,41 +134,70 @@ jobs:
 
           echo "✅ Conectado ao cluster com sucesso"
 
-          # Remover CRDs do cert-manager se existirem e não forem gerenciados pelo Helm
-          echo "🔍 Verificando CRDs do cert-manager..."
+          # Verificar se cert-manager existe e remover TODOS os recursos se não for gerenciado pelo Helm
+          echo "🔍 Verificando cert-manager..."
 
-          CERT_MANAGER_CRDS=(
-            "certificaterequests.cert-manager.io"
-            "certificates.cert-manager.io"
-            "challenges.acme.cert-manager.io"
-            "clusterissuers.cert-manager.io"
-            "issuers.cert-manager.io"
-            "orders.acme.cert-manager.io"
-          )
+          CERT_MANAGER_HELM=$(helm list -n cert-manager 2>/dev/null | grep -c cert-manager || echo "0")
 
-          for crd in "${CERT_MANAGER_CRDS[@]}"; do
-            if kubectl get crd "$crd" &> /dev/null; then
-              # Verificar se é gerenciado pelo Helm
-              MANAGED_BY=$(kubectl get crd "$crd" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null || echo "")
+          if [ "$CERT_MANAGER_HELM" -eq "0" ]; then
+            # cert-manager não é gerenciado pelo Helm, remover tudo
+            if kubectl get namespace cert-manager &> /dev/null; then
+              echo "⚠️ cert-manager encontrado mas NÃO gerenciado pelo Helm"
+              echo "🗑️ Removendo TODOS os recursos do cert-manager..."
               
-              if [ "$MANAGED_BY" != "Helm" ]; then
-                echo "Removendo CRD não gerenciado pelo Helm: $crd"
-                kubectl delete crd "$crd" --ignore-not-found=true --timeout=30s || true
-              else
-                echo "CRD $crd já é gerenciado pelo Helm, mantendo"
-              fi
-            fi
-          done
-
-          # Remover namespace cert-manager se não for gerenciado pelo Helm
-          if kubectl get namespace cert-manager &> /dev/null; then
-            if ! helm list -n cert-manager 2>/dev/null | grep -q cert-manager; then
-              echo "Removendo namespace cert-manager não gerenciado pelo Helm..."
-              kubectl delete namespace cert-manager --ignore-not-found=true --timeout=60s || true
-              sleep 5
+              # Remover todos os ClusterRoles
+              echo "Removendo ClusterRoles..."
+              kubectl delete clusterrole cert-manager-cainjector --ignore-not-found=true
+              kubectl delete clusterrole cert-manager-controller-issuers --ignore-not-found=true
+              kubectl delete clusterrole cert-manager-controller-clusterissuers --ignore-not-found=true
+              kubectl delete clusterrole cert-manager-controller-certificates --ignore-not-found=true
+              kubectl delete clusterrole cert-manager-controller-orders --ignore-not-found=true
+              kubectl delete clusterrole cert-manager-controller-challenges --ignore-not-found=true
+              kubectl delete clusterrole cert-manager-controller-ingress-shim --ignore-not-found=true
+              kubectl delete clusterrole cert-manager-view --ignore-not-found=true
+              kubectl delete clusterrole cert-manager-edit --ignore-not-found=true
+              kubectl delete clusterrole cert-manager-controller-approve:cert-manager-io --ignore-not-found=true
+              kubectl delete clusterrole cert-manager-controller-certificatesigningrequests --ignore-not-found=true
+              kubectl delete clusterrole cert-manager-webhook:subjectaccessreviews --ignore-not-found=true
+              
+              # Remover todos os ClusterRoleBindings
+              echo "Removendo ClusterRoleBindings..."
+              kubectl delete clusterrolebinding cert-manager-cainjector --ignore-not-found=true
+              kubectl delete clusterrolebinding cert-manager-controller-issuers --ignore-not-found=true
+              kubectl delete clusterrolebinding cert-manager-controller-clusterissuers --ignore-not-found=true
+              kubectl delete clusterrolebinding cert-manager-controller-certificates --ignore-not-found=true
+              kubectl delete clusterrolebinding cert-manager-controller-orders --ignore-not-found=true
+              kubectl delete clusterrolebinding cert-manager-controller-challenges --ignore-not-found=true
+              kubectl delete clusterrolebinding cert-manager-controller-ingress-shim --ignore-not-found=true
+              kubectl delete clusterrolebinding cert-manager-controller-approve:cert-manager-io --ignore-not-found=true
+              kubectl delete clusterrolebinding cert-manager-controller-certificatesigningrequests --ignore-not-found=true
+              kubectl delete clusterrolebinding cert-manager-webhook:subjectaccessreviews --ignore-not-found=true
+              
+              # Remover MutatingWebhookConfiguration e ValidatingWebhookConfiguration
+              echo "Removendo Webhooks..."
+              kubectl delete mutatingwebhookconfiguration cert-manager-webhook --ignore-not-found=true
+              kubectl delete validatingwebhookconfiguration cert-manager-webhook --ignore-not-found=true
+              
+              # Remover CRDs
+              echo "Removendo CRDs..."
+              kubectl delete crd certificaterequests.cert-manager.io --ignore-not-found=true
+              kubectl delete crd certificates.cert-manager.io --ignore-not-found=true
+              kubectl delete crd challenges.acme.cert-manager.io --ignore-not-found=true
+              kubectl delete crd clusterissuers.cert-manager.io --ignore-not-found=true
+              kubectl delete crd issuers.cert-manager.io --ignore-not-found=true
+              kubectl delete crd orders.acme.cert-manager.io --ignore-not-found=true
+              
+              # Remover namespace (isso remove todos os recursos dentro dele)
+              echo "Removendo namespace cert-manager..."
+              kubectl delete namespace cert-manager --ignore-not-found=true --timeout=90s || true
+              
+              echo "✅ cert-manager removido completamente"
+              sleep 10
             else
-              echo "Namespace cert-manager já é gerenciado pelo Helm, mantendo"
+              echo "✅ cert-manager não encontrado"
             fi
+          else
+            echo "✅ cert-manager já é gerenciado pelo Helm, mantendo"
           fi
 
           # Remover CRDs do AWS Load Balancer Controller se não forem gerenciados pelo Helm
