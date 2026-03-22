@@ -144,6 +144,15 @@ jobs:
             if ! helm list -n cert-manager 2>/dev/null | grep -q cert-manager; then
               echo "Removendo cert-manager existente (não gerenciado pelo Helm)..."
               
+              # Remover CRDs do cert-manager primeiro
+              echo "Removendo CRDs do cert-manager..."
+              kubectl delete crd certificaterequests.cert-manager.io --ignore-not-found=true
+              kubectl delete crd certificates.cert-manager.io --ignore-not-found=true
+              kubectl delete crd challenges.acme.cert-manager.io --ignore-not-found=true
+              kubectl delete crd clusterissuers.cert-manager.io --ignore-not-found=true
+              kubectl delete crd issuers.cert-manager.io --ignore-not-found=true
+              kubectl delete crd orders.acme.cert-manager.io --ignore-not-found=true
+              
               # Remover recursos do cert-manager
               kubectl delete namespace cert-manager --ignore-not-found=true --timeout=60s || true
               
@@ -243,9 +252,20 @@ jobs:
 
           # Remover cert-manager se existir (não gerenciado pelo Helm)
           if kubectl get namespace cert-manager &> /dev/null; then
-            if ! helm list -n cert-manager | grep -q cert-manager; then
+            if ! helm list -n cert-manager 2>/dev/null | grep -q cert-manager; then
               echo "Removendo cert-manager existente (não gerenciado pelo Helm)..."
-              kubectl delete namespace cert-manager --ignore-not-found=true --timeout=60s
+              
+              # Remover CRDs do cert-manager primeiro
+              echo "Removendo CRDs do cert-manager..."
+              kubectl delete crd certificaterequests.cert-manager.io --ignore-not-found=true
+              kubectl delete crd certificates.cert-manager.io --ignore-not-found=true
+              kubectl delete crd challenges.acme.cert-manager.io --ignore-not-found=true
+              kubectl delete crd clusterissuers.cert-manager.io --ignore-not-found=true
+              kubectl delete crd issuers.cert-manager.io --ignore-not-found=true
+              kubectl delete crd orders.acme.cert-manager.io --ignore-not-found=true
+              
+              # Remover namespace
+              kubectl delete namespace cert-manager --ignore-not-found=true --timeout=60s || true
               
               # Aguardar namespace ser removido
               sleep 10
