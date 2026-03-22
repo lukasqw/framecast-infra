@@ -64,6 +64,16 @@ resource "aws_vpc_security_group_egress_rule" "eks_all" {
   cidr_ipv4         = "0.0.0.0/0"
 }
 
+# Permitir que o ALB alcance os pods na porta da aplicação (8080)
+resource "aws_vpc_security_group_ingress_rule" "eks_from_alb" {
+  security_group_id            = aws_security_group.eks.id
+  description                  = "Allow ALB to reach application pods on port 8080"
+  from_port                    = 8080
+  to_port                      = 8080
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.alb.id
+}
+
 # RDS Security Group Rules
 resource "aws_vpc_security_group_ingress_rule" "rds_from_eks" {
   security_group_id            = aws_security_group.rds.id
