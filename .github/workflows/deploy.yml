@@ -104,60 +104,108 @@ jobs:
           fi
 
       - name: Cleanup Existing Resources Before Apply
-        if: steps.plan.outputs.has_changes == 'true'
         continue-on-error: true
         run: |
-          echo "🧹 Limpando recursos existentes não gerenciados pelo Helm..."
+          echo "🧹 Verificando e limpando recursos existentes não gerenciados pelo Helm..."
 
-          # Configurar kubeconfig
-          aws eks update-kubeconfig \
-            --name $(cd ${{ env.WORKING_DIR }} && terraform output -raw eks_cluster_name) \
-            --region ${{ env.AWS_REGION }}
+          # Verificar se cluster EKS existe
+          CLUSTER_NAME=$(cd ${{ env.WORKING_DIR }} && terraform output -raw eks_cluster_name 2>/dev/null || echo "")
 
-          # Remover AWS Load Balancer Controller se existir (não gerenciado pelo Helm)
-          if kubectl get deployment aws-load-balancer-controller -n kube-system &> /dev/null; then
-            echo "Removendo AWS Load Balancer Controller existente..."
-            
-            # Remover CRDs primeiro
-            kubectl delete crd ingressclassparams.elbv2.k8s.aws --ignore-not-found=true
-            kubectl delete crd targetgroupbindings.elbv2.k8s.aws --ignore-not-found=true
-            
-            # Remover recursos
-            kubectl delete deployment aws-load-balancer-controller -n kube-system --ignore-not-found=true
-            kubectl delete serviceaccount aws-load-balancer-controller -n kube-system --ignore-not-found=true
-            kubectl delete service aws-load-balancer-webhook-service -n kube-system --ignore-not-found=true
-            kubectl delete clusterrole aws-load-balancer-controller-role --ignore-not-found=true
-            kubectl delete clusterrolebinding aws-load-balancer-controller-rolebinding --ignore-not-found=true
-            kubectl delete role aws-load-balancer-controller-leader-election-role -n kube-system --ignore-not-found=true
-            kubectl delete rolebinding aws-load-balancer-controller-leader-election-rolebinding -n kube-system --ignore-not-found=true
-            
-            # Remover certificados e issuers
-            kubectl delete certificate aws-load-balancer-serving-cert -n kube-system --ignore-not-found=true
-            kubectl delete issuer aws-load-balancer-selfsigned-issuer -n kube-system --ignore-not-found=true
-            
-            echo "✅ AWS Load Balancer Controller removido"
-            sleep 5
+          if [ -z "$CLUSTER_NAME" ]; then
+            echo "::notice::Cluster EKS ainda não existe, pulando limpeza"
+            exit 0
           fi
 
-          # Remover cert-manager se existir (não gerenciado pelo Helm)
+          echo "Cluster encontrado: $CLUSTER_NAME"
+
+          # Configurar kubeconfig
+          if ! aws eks update-kubeconfig \
+            --name "$CLUSTER_NAME" \
+            --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "::notice::Não foi possível conectar ao cluster, pulando limpeza"
+            exit 0
+          fi
+
+          # Verificar se consegue acessar o cluster
+          if ! kubectl get nodes &> /dev/null; then
+            echo "::notice::Sem acesso ao cluster, pulando limpeza"
+            exit 0
+          fi
+
+          echo "✅ Conectado ao cluster com sucesso"
+
+          # Remover CRDs do cert-manager se existirem e não forem gerenciados pelo Helm
+          echo "🔍 Verificando CRDs do cert-manager..."
+
+          CERT_MANAGER_CRDS=(
+            "certificaterequests.cert-manager.io"
+            "certificates.cert-manager.io"
+            "challenges.acme.cert-manager.io"
+            "clusterissuers.cert-manager.io"
+            "issuers.cert-manager.io"
+            "orders.acme.cert-manager.io"
+          )
+
+          for crd in "${CERT_MANAGER_CRDS[@]}"; do
+            if kubectl get crd "$crd" &> /dev/null; then
+              # Verificar se é gerenciado pelo Helm
+              MANAGED_BY=$(kubectl get crd "$crd" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null || echo "")
+              
+              if [ "$MANAGED_BY" != "Helm" ]; then
+                echo "Removendo CRD não gerenciado pelo Helm: $crd"
+                kubectl delete crd "$crd" --ignore-not-found=true --timeout=30s || true
+              else
+                echo "CRD $crd já é gerenciado pelo Helm, mantendo"
+              fi
+            fi
+          done
+
+          # Remover namespace cert-manager se não for gerenciado pelo Helm
           if kubectl get namespace cert-manager &> /dev/null; then
             if ! helm list -n cert-manager 2>/dev/null | grep -q cert-manager; then
-              echo "Removendo cert-manager existente (não gerenciado pelo Helm)..."
-              
-              # Remover CRDs do cert-manager primeiro
-              echo "Removendo CRDs do cert-manager..."
-              kubectl delete crd certificaterequests.cert-manager.io --ignore-not-found=true
-              kubectl delete crd certificates.cert-manager.io --ignore-not-found=true
-              kubectl delete crd challenges.acme.cert-manager.io --ignore-not-found=true
-              kubectl delete crd clusterissuers.cert-manager.io --ignore-not-found=true
-              kubectl delete crd issuers.cert-manager.io --ignore-not-found=true
-              kubectl delete crd orders.acme.cert-manager.io --ignore-not-found=true
-              
-              # Remover recursos do cert-manager
+              echo "Removendo namespace cert-manager não gerenciado pelo Helm..."
               kubectl delete namespace cert-manager --ignore-not-found=true --timeout=60s || true
+              sleep 5
+            else
+              echo "Namespace cert-manager já é gerenciado pelo Helm, mantendo"
+            fi
+          fi
+
+          # Remover CRDs do AWS Load Balancer Controller se não forem gerenciados pelo Helm
+          echo "🔍 Verificando CRDs do AWS Load Balancer Controller..."
+
+          ALB_CRDS=(
+            "ingressclassparams.elbv2.k8s.aws"
+            "targetgroupbindings.elbv2.k8s.aws"
+          )
+
+          for crd in "${ALB_CRDS[@]}"; do
+            if kubectl get crd "$crd" &> /dev/null; then
+              MANAGED_BY=$(kubectl get crd "$crd" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null || echo "")
               
-              echo "✅ cert-manager removido"
-              sleep 10
+              if [ "$MANAGED_BY" != "Helm" ]; then
+                echo "Removendo CRD não gerenciado pelo Helm: $crd"
+                kubectl delete crd "$crd" --ignore-not-found=true --timeout=30s || true
+              else
+                echo "CRD $crd já é gerenciado pelo Helm, mantendo"
+              fi
+            fi
+          done
+
+          # Remover deployment do AWS Load Balancer Controller se não for gerenciado pelo Helm
+          if kubectl get deployment aws-load-balancer-controller -n kube-system &> /dev/null; then
+            MANAGED_BY=$(kubectl get deployment aws-load-balancer-controller -n kube-system -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null || echo "")
+            
+            if [ "$MANAGED_BY" != "Helm" ]; then
+              echo "Removendo AWS Load Balancer Controller não gerenciado pelo Helm..."
+              kubectl delete deployment aws-load-balancer-controller -n kube-system --ignore-not-found=true
+              kubectl delete serviceaccount aws-load-balancer-controller -n kube-system --ignore-not-found=true
+              kubectl delete service aws-load-balancer-webhook-service -n kube-system --ignore-not-found=true
+              kubectl delete clusterrole aws-load-balancer-controller-role --ignore-not-found=true
+              kubectl delete clusterrolebinding aws-load-balancer-controller-rolebinding --ignore-not-found=true
+              sleep 3
+            else
+              echo "AWS Load Balancer Controller já é gerenciado pelo Helm, mantendo"
             fi
           fi
 
@@ -228,51 +276,6 @@ jobs:
           aws eks update-kubeconfig \
             --name ${{ steps.outputs.outputs.eks_cluster }} \
             --region ${{ env.AWS_REGION }}
-
-      - name: Cleanup Existing Resources
-        if: steps.outputs.outputs.eks_cluster != ''
-        continue-on-error: true
-        run: |
-          echo "🧹 Limpando recursos existentes não gerenciados pelo Helm..."
-
-          # Remover AWS Load Balancer Controller se existir (não gerenciado pelo Helm)
-          if kubectl get deployment aws-load-balancer-controller -n kube-system &> /dev/null; then
-            echo "Removendo AWS Load Balancer Controller existente..."
-            kubectl delete deployment aws-load-balancer-controller -n kube-system --ignore-not-found=true
-            kubectl delete serviceaccount aws-load-balancer-controller -n kube-system --ignore-not-found=true
-            kubectl delete service aws-load-balancer-webhook-service -n kube-system --ignore-not-found=true
-            kubectl delete clusterrole aws-load-balancer-controller-role --ignore-not-found=true
-            kubectl delete clusterrolebinding aws-load-balancer-controller-rolebinding --ignore-not-found=true
-            kubectl delete role aws-load-balancer-controller-leader-election-role -n kube-system --ignore-not-found=true
-            kubectl delete rolebinding aws-load-balancer-controller-leader-election-rolebinding -n kube-system --ignore-not-found=true
-            
-            # Aguardar recursos serem removidos
-            sleep 5
-          fi
-
-          # Remover cert-manager se existir (não gerenciado pelo Helm)
-          if kubectl get namespace cert-manager &> /dev/null; then
-            if ! helm list -n cert-manager 2>/dev/null | grep -q cert-manager; then
-              echo "Removendo cert-manager existente (não gerenciado pelo Helm)..."
-              
-              # Remover CRDs do cert-manager primeiro
-              echo "Removendo CRDs do cert-manager..."
-              kubectl delete crd certificaterequests.cert-manager.io --ignore-not-found=true
-              kubectl delete crd certificates.cert-manager.io --ignore-not-found=true
-              kubectl delete crd challenges.acme.cert-manager.io --ignore-not-found=true
-              kubectl delete crd clusterissuers.cert-manager.io --ignore-not-found=true
-              kubectl delete crd issuers.cert-manager.io --ignore-not-found=true
-              kubectl delete crd orders.acme.cert-manager.io --ignore-not-found=true
-              
-              # Remover namespace
-              kubectl delete namespace cert-manager --ignore-not-found=true --timeout=60s || true
-              
-              # Aguardar namespace ser removido
-              sleep 10
-            fi
-          fi
-
-          echo "✅ Limpeza concluída"
 
       - name: Verify AWS Load Balancer Controller
         if: steps.outputs.outputs.eks_cluster != ''
