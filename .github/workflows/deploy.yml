@@ -169,6 +169,27 @@ jobs:
             --name ${{ steps.outputs.outputs.eks_cluster }} \
             --region ${{ env.AWS_REGION }}
 
+      - name: Verify AWS Load Balancer Controller
+        if: steps.outputs.outputs.eks_cluster != ''
+        run: |
+          echo "🔍 Verificando AWS Load Balancer Controller..."
+
+          # Aguardar controller ficar disponível (instalado pelo Terraform)
+          for i in {1..12}; do
+            if kubectl get deployment -n kube-system aws-load-balancer-controller &> /dev/null; then
+              echo "✅ AWS Load Balancer Controller encontrado"
+              kubectl get deployment -n kube-system aws-load-balancer-controller
+              break
+            fi
+            echo "Aguardando controller... ($i/12)"
+            sleep 5
+          done
+
+          # Verificar CRDs
+          echo ""
+          echo "🔍 Verificando CRDs..."
+          kubectl get crd targetgroupbindings.elbv2.k8s.aws || echo "⚠️ CRD não encontrado ainda"
+
       - name: Apply Kubernetes Resources
         if: steps.outputs.outputs.eks_cluster != ''
         run: |
