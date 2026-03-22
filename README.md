@@ -5,6 +5,7 @@ Este repositório contém a infraestrutura como código (IaC) para o projeto EKS
 ## Estrutura do Projeto
 
 ```
+
 .
 ├── terraform/
 │   ├── modules/                 # Módulos reutilizáveis
