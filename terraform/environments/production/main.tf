@@ -75,6 +75,9 @@ module "alb" {
 
   target_type = "ip"
 
+  # Health check deve apontar para o endpoint real da aplicação
+  health_check_path = "/health"
+
   tags = local.common_tags
 }
 
@@ -106,6 +109,25 @@ resource "aws_vpc_security_group_ingress_rule" "rds_from_eks_cluster_nodes" {
     {
       Name    = "${var.project_name}-rds-from-eks-nodes"
       Purpose = "allow-eks-nodes-to-rds"
+    }
+  )
+}
+
+# Regra adicional: Permitir que o ALB alcance os pods no cluster security group (auto-criado pelo EKS)
+# O EKS cluster security group é o SG onde os pods realmente rodam
+resource "aws_vpc_security_group_ingress_rule" "eks_cluster_from_alb" {
+  security_group_id            = module.eks.cluster_security_group_id
+  description                  = "Allow ALB to reach pods on port 8080 (auto-created cluster SG)"
+  from_port                    = 8080
+  to_port                      = 8080
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = module.security_groups.alb_security_group_id
+
+  tags = merge(
+    local.common_tags,
+    {
+      Name    = "${var.project_name}-eks-from-alb"
+      Purpose = "allow-alb-to-eks-pods"
     }
   )
 }
