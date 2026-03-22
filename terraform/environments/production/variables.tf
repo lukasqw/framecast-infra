@@ -22,7 +22,7 @@ variable "access_config" {
   description = "Configuração de acesso do EKS (API = apenas Access Entries, CONFIG_MAP = apenas ConfigMap, API_AND_CONFIG_MAP = ambos)"
   type        = string
   default     = "API_AND_CONFIG_MAP"
-  
+
   validation {
     condition     = contains(["API", "CONFIG_MAP", "API_AND_CONFIG_MAP"], var.access_config)
     error_message = "access_config deve ser 'API', 'CONFIG_MAP' ou 'API_AND_CONFIG_MAP'"

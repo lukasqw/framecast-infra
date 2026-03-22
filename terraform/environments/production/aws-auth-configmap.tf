@@ -11,23 +11,8 @@
 # Se você realmente precisa do ConfigMap, aplique manualmente após criar o cluster:
 # ./scripts/apply-aws-auth.sh
 
-# Extrair o nome do usuário/role do ARN
-locals {
-  # ARN completo do caller
-  caller_arn = data.aws_caller_identity.current.arn
-  
-  # Extrair username do ARN
-  # Exemplo: arn:aws:iam::123456789:user/awsstudent -> awsstudent
-  # Exemplo: arn:aws:iam::123456789:role/LabRole -> LabRole
-  caller_username = element(split("/", local.caller_arn), length(split("/", local.caller_arn)) - 1)
-  
-  # Determinar se é user ou role
-  is_user = can(regex(":user/", local.caller_arn))
-  is_role = can(regex(":role/", local.caller_arn))
-  
-  # Account ID
-  account_id = data.aws_caller_identity.current.account_id
-}
+# Os locals (caller_arn, caller_username, is_user, is_role, account_id) 
+# estão definidos em locals.tf
 
 # Output para debug
 output "current_caller_info" {
