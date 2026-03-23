@@ -31,22 +31,6 @@ resource "aws_security_group" "rds" {
   )
 }
 
-resource "aws_security_group" "alb" {
-  name        = "${var.name_prefix}-alb-sg"
-  description = "Security group for Application Load Balancer"
-  vpc_id      = var.vpc_id
-
-  tags = merge(
-    var.tags,
-    {
-      Name         = "${var.name_prefix}-alb-sg"
-      ResourceType = "security-group"
-      Service      = "ec2"
-      Purpose      = "application-load-balancer"
-    }
-  )
-}
-
 # EKS Security Group Rules
 resource "aws_vpc_security_group_ingress_rule" "eks_https" {
   security_group_id = aws_security_group.eks.id
@@ -64,14 +48,14 @@ resource "aws_vpc_security_group_egress_rule" "eks_all" {
   cidr_ipv4         = "0.0.0.0/0"
 }
 
-# Permitir que o ALB alcance os pods na porta da aplicação (8080)
-resource "aws_vpc_security_group_ingress_rule" "eks_from_alb" {
-  security_group_id            = aws_security_group.eks.id
-  description                  = "Allow ALB to reach application pods on port 8080"
-  from_port                    = 8080
-  to_port                      = 8080
-  ip_protocol                  = "tcp"
-  referenced_security_group_id = aws_security_group.alb.id
+# Permitir que o NLB alcance os nodes na NodePort 30080
+resource "aws_vpc_security_group_ingress_rule" "eks_nodeport" {
+  security_group_id = aws_security_group.eks.id
+  description       = "Allow NLB to reach NodePort 30080"
+  from_port         = 30080
+  to_port           = 30080
+  ip_protocol       = "tcp"
+  cidr_ipv4         = "0.0.0.0/0"
 }
 
 # RDS Security Group Rules
@@ -95,32 +79,6 @@ resource "aws_vpc_security_group_ingress_rule" "rds_from_vpc" {
 
 resource "aws_vpc_security_group_egress_rule" "rds_all" {
   security_group_id = aws_security_group.rds.id
-  description       = "Allow all outbound traffic"
-  ip_protocol       = "-1"
-  cidr_ipv4         = "0.0.0.0/0"
-}
-
-# ALB Security Group Rules
-resource "aws_vpc_security_group_ingress_rule" "alb_http" {
-  security_group_id = aws_security_group.alb.id
-  description       = "HTTP from anywhere"
-  from_port         = 80
-  to_port           = 80
-  ip_protocol       = "tcp"
-  cidr_ipv4         = "0.0.0.0/0"
-}
-
-resource "aws_vpc_security_group_ingress_rule" "alb_https" {
-  security_group_id = aws_security_group.alb.id
-  description       = "HTTPS from anywhere"
-  from_port         = 443
-  to_port           = 443
-  ip_protocol       = "tcp"
-  cidr_ipv4         = "0.0.0.0/0"
-}
-
-resource "aws_vpc_security_group_egress_rule" "alb_all" {
-  security_group_id = aws_security_group.alb.id
   description       = "Allow all outbound traffic"
   ip_protocol       = "-1"
   cidr_ipv4         = "0.0.0.0/0"

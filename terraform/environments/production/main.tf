@@ -63,26 +63,21 @@ module "rds" {
   tags = local.common_tags
 }
 
-# Application Load Balancer
-# Mantido para uso do API Gateway
-module "alb" {
-  source = "../../modules/alb"
+# Network Load Balancer
+# Usado pelo API Gateway para rotear tráfego para os pods via NodePort
+module "nlb" {
+  source = "../../modules/nlb"
 
-  name            = "${var.project_name}-alb"
-  security_groups = [module.security_groups.alb_security_group_id]
-  subnets         = local.filtered_subnet_ids
-  vpc_id          = data.aws_vpc.main.id
+  name     = "${var.project_name}-nlb"
+  subnets  = local.filtered_subnet_ids
+  vpc_id   = data.aws_vpc.main.id
+  asg_name = module.eks.node_group_asg_name
 
-  target_type = "ip"
-
-  # Health check deve apontar para o endpoint real da aplicação
+  target_group_port = 30080
   health_check_path = "/health"
 
   tags = local.common_tags
 }
-
-# AWS Load Balancer Controller: instalado via kubectl no deploy workflow da aplicação
-# (removido do Terraform para evitar problemas de permissão com Helm provider no AWS Academy)
 
 # Regra adicional: Permitir que o Security Group do cluster EKS acesse o RDS
 # Esta regra é necessária porque o EKS cria automaticamente um Security Group para os nodes
@@ -103,21 +98,20 @@ resource "aws_vpc_security_group_ingress_rule" "rds_from_eks_cluster_nodes" {
   )
 }
 
-# Regra adicional: Permitir que o ALB alcance os pods no cluster security group (auto-criado pelo EKS)
-# O EKS cluster security group é o SG onde os pods realmente rodam
-resource "aws_vpc_security_group_ingress_rule" "eks_cluster_from_alb" {
-  security_group_id            = module.eks.cluster_security_group_id
-  description                  = "Allow ALB to reach pods on port 8080 (auto-created cluster SG)"
-  from_port                    = 8080
-  to_port                      = 8080
-  ip_protocol                  = "tcp"
-  referenced_security_group_id = module.security_groups.alb_security_group_id
+# Regra adicional: Permitir que o NLB alcance a NodePort no cluster security group (auto-criado pelo EKS)
+resource "aws_vpc_security_group_ingress_rule" "eks_cluster_nodeport" {
+  security_group_id = module.eks.cluster_security_group_id
+  description       = "Allow NLB to reach NodePort 30080 (cluster SG)"
+  from_port         = 30080
+  to_port           = 30080
+  ip_protocol       = "tcp"
+  cidr_ipv4         = "0.0.0.0/0"
 
   tags = merge(
     local.common_tags,
     {
-      Name    = "${var.project_name}-eks-from-alb"
-      Purpose = "allow-alb-to-eks-pods"
+      Name    = "${var.project_name}-eks-nodeport"
+      Purpose = "allow-nlb-to-eks-nodeport"
     }
   )
 }
