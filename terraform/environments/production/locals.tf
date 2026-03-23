@@ -66,7 +66,4 @@ locals {
     if subnet.availability_zone == "${var.aws_region}a"
   ][0]
 
-  # Database configuration
-  db_name     = replace(lower(var.project_name), "-", "_")
-  db_username = "postgres"
 }

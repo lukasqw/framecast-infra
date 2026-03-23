@@ -48,15 +48,12 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: ${{ github.event.inputs.environment || 'production' }}
-      url: http://${{ steps.outputs.outputs.alb_dns }}
+      url: http://${{ steps.outputs.outputs.nlb_dns }}
 
     outputs:
       environment: ${{ env.ENVIRONMENT }}
-      rds_endpoint: ${{ steps.outputs.outputs.rds_endpoint }}
-      rds_port: ${{ steps.outputs.outputs.rds_port }}
-      rds_database: ${{ steps.outputs.outputs.rds_database }}
-      alb_dns: ${{ steps.outputs.outputs.alb_dns }}
-      alb_arn: ${{ steps.outputs.outputs.alb_arn }}
+      nlb_dns: ${{ steps.outputs.outputs.nlb_dns }}
+      nlb_arn: ${{ steps.outputs.outputs.nlb_arn }}
       eks_cluster: ${{ steps.outputs.outputs.eks_cluster }}
       eks_endpoint: ${{ steps.outputs.outputs.eks_endpoint }}
       vpc_id: ${{ steps.outputs.outputs.vpc_id }}
@@ -89,8 +86,6 @@ jobs:
       - name: Terraform Plan
         id: plan
         working-directory: ${{ env.WORKING_DIR }}
-        env:
-          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
         run: |
           echo "📋 Gerando plano de execução..."
           terraform plan -out=tfplan -no-color 2>&1 | tee plan.txt
@@ -243,8 +238,6 @@ jobs:
       - name: Terraform Apply
         if: steps.plan.outputs.has_changes == 'true' || github.event.inputs.auto_approve == 'true'
         working-directory: ${{ env.WORKING_DIR }}
-        env:
-          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
         run: |
           echo "🚀 Aplicando mudanças na infraestrutura..."
 
@@ -262,14 +255,9 @@ jobs:
         run: |
           echo "📊 Coletando outputs da infraestrutura..."
 
-          # RDS
-          RDS_ENDPOINT=$(terraform output -raw rds_endpoint 2>/dev/null || echo "")
-          RDS_PORT=$(terraform output -raw rds_port 2>/dev/null || echo "5432")
-          RDS_DATABASE=$(terraform output -raw rds_database_name 2>/dev/null || echo "oficina_tech")
-
-          # ALB
-          ALB_DNS=$(terraform output -raw alb_dns_name 2>/dev/null || echo "")
-          ALB_ARN=$(terraform output -raw alb_arn 2>/dev/null || echo "")
+          # NLB
+          NLB_DNS=$(terraform output -raw nlb_dns_name 2>/dev/null || echo "")
+          NLB_ARN=$(terraform output -raw nlb_arn 2>/dev/null || echo "")
 
           # EKS
           EKS_CLUSTER=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "")
@@ -282,19 +270,15 @@ jobs:
           DEPLOYED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
           # Exportar outputs
-          echo "rds_endpoint=$RDS_ENDPOINT" >> $GITHUB_OUTPUT
-          echo "rds_port=$RDS_PORT" >> $GITHUB_OUTPUT
-          echo "rds_database=$RDS_DATABASE" >> $GITHUB_OUTPUT
-          echo "alb_dns=$ALB_DNS" >> $GITHUB_OUTPUT
-          echo "alb_arn=$ALB_ARN" >> $GITHUB_OUTPUT
+          echo "nlb_dns=$NLB_DNS" >> $GITHUB_OUTPUT
+          echo "nlb_arn=$NLB_ARN" >> $GITHUB_OUTPUT
           echo "eks_cluster=$EKS_CLUSTER" >> $GITHUB_OUTPUT
           echo "eks_endpoint=$EKS_ENDPOINT" >> $GITHUB_OUTPUT
           echo "vpc_id=$VPC_ID" >> $GITHUB_OUTPUT
           echo "deployed_at=$DEPLOYED_AT" >> $GITHUB_OUTPUT
 
           # Logs
-          echo "::notice::RDS: $RDS_ENDPOINT:$RDS_PORT/$RDS_DATABASE"
-          echo "::notice::ALB: $ALB_DNS"
+          echo "::notice::NLB: $NLB_DNS"
           echo "::notice::EKS: $EKS_CLUSTER"
           echo "::notice::VPC: $VPC_ID"
 
@@ -348,10 +332,7 @@ jobs:
           echo "🔧 Atualizando ConfigMap com dados da infraestrutura..."
 
           kubectl create configmap oficina-tech-infra \
-            --from-literal=DB_HOST="${{ steps.outputs.outputs.rds_endpoint }}" \
-            --from-literal=DB_PORT="${{ steps.outputs.outputs.rds_port }}" \
-            --from-literal=DB_NAME="${{ steps.outputs.outputs.rds_database }}" \
-            --from-literal=ALB_DNS="${{ steps.outputs.outputs.alb_dns }}" \
+            --from-literal=NLB_DNS="${{ steps.outputs.outputs.nlb_dns }}" \
             -n ${{ env.NAMESPACE }} \
             --dry-run=client -o yaml | kubectl apply -f -
 
@@ -364,15 +345,9 @@ jobs:
           cat > /tmp/infra-outputs/${{ env.ENVIRONMENT }}.json <<EOF
           {
             "environment": "${{ env.ENVIRONMENT }}",
-            "rds": {
-              "endpoint": "${{ steps.outputs.outputs.rds_endpoint }}",
-              "port": "${{ steps.outputs.outputs.rds_port }}",
-              "database": "${{ steps.outputs.outputs.rds_database }}"
-            },
-            "alb": {
-              "dns": "${{ steps.outputs.outputs.alb_dns }}",
-              "arn": "${{ steps.outputs.outputs.alb_arn }}",
-              "url": "http://${{ steps.outputs.outputs.alb_dns }}"
+            "nlb": {
+              "dns": "${{ steps.outputs.outputs.nlb_dns }}",
+              "arn": "${{ steps.outputs.outputs.nlb_arn }}"
             },
             "eks": {
               "cluster_name": "${{ steps.outputs.outputs.eks_cluster }}",
@@ -410,13 +385,11 @@ jobs:
           echo "| Ambiente | ${{ env.ENVIRONMENT }} |" >> $GITHUB_STEP_SUMMARY
           echo "| VPC | ${{ steps.outputs.outputs.vpc_id }} |" >> $GITHUB_STEP_SUMMARY
           echo "| EKS Cluster | ${{ steps.outputs.outputs.eks_cluster }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| RDS Endpoint | ${{ steps.outputs.outputs.rds_endpoint }}:${{ steps.outputs.outputs.rds_port }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Database | ${{ steps.outputs.outputs.rds_database }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| ALB DNS | ${{ steps.outputs.outputs.alb_dns }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| NLB DNS | ${{ steps.outputs.outputs.nlb_dns }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 🔗 URLs" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Application:** http://${{ steps.outputs.outputs.alb_dns }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Application:** http://${{ steps.outputs.outputs.nlb_dns }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### ℹ️ Deployment Info" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -474,36 +447,22 @@ jobs:
           echo "Pods no namespace ${{ env.NAMESPACE }}:"
           kubectl get pods -n ${{ env.NAMESPACE }} --request-timeout=30s || echo "⚠️ Namespace não encontrado ou sem acesso"
 
-      - name: Check RDS Status
-        if: needs.deploy.outputs.rds_endpoint != ''
+      - name: Check NLB Status
+        if: needs.deploy.outputs.nlb_dns != ''
         run: |
-          echo "🗄️ Verificando status do RDS..."
+          echo "⚖️ Verificando status do NLB..."
 
-          # Extrair identificador do RDS do endpoint
-          RDS_ID=$(echo "${{ needs.deploy.outputs.rds_endpoint }}" | cut -d'.' -f1)
-
-          aws rds describe-db-instances \
-            --db-instance-identifier "$RDS_ID" \
-            --query 'DBInstances[0].[DBInstanceStatus,Engine,EngineVersion]' \
-            --output table || echo "⚠️ Não foi possível verificar status do RDS"
-
-      - name: Check ALB Status
-        if: needs.deploy.outputs.alb_dns != ''
-        run: |
-          echo "⚖️ Verificando status do ALB..."
-
-          # Tentar fazer request para o ALB
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
             --connect-timeout 10 \
             --max-time 30 \
-            http://${{ needs.deploy.outputs.alb_dns }}/health || echo "000")
+            http://${{ needs.deploy.outputs.nlb_dns }}/health || echo "000")
 
           echo "HTTP Status Code: $HTTP_CODE"
 
           if [ "$HTTP_CODE" == "200" ] || [ "$HTTP_CODE" == "404" ]; then
-            echo "✅ ALB está respondendo"
+            echo "✅ NLB está respondendo"
           else
-            echo "⚠️ ALB não está respondendo corretamente (código: $HTTP_CODE)"
+            echo "⚠️ NLB não está respondendo corretamente (código: $HTTP_CODE)"
           fi
 
       - name: Health Check Summary
@@ -515,8 +474,7 @@ jobs:
           echo "### ✅ Componentes Verificados" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- EKS Cluster" >> $GITHUB_STEP_SUMMARY
-          echo "- RDS Database" >> $GITHUB_STEP_SUMMARY
-          echo "- Application Load Balancer" >> $GITHUB_STEP_SUMMARY
+          echo "- Network Load Balancer" >> $GITHUB_STEP_SUMMARY
 
   # ============================================
   # RESUMO FINAL
@@ -550,9 +508,7 @@ jobs:
           echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Ambiente | ${{ needs.deploy.outputs.environment }} |" >> $GITHUB_STEP_SUMMARY
           echo "| EKS Cluster | ${{ needs.deploy.outputs.eks_cluster }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| RDS | ${{ needs.deploy.outputs.rds_endpoint }}:${{ needs.deploy.outputs.rds_port }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Database | ${{ needs.deploy.outputs.rds_database }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| ALB | ${{ needs.deploy.outputs.alb_dns }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| NLB | ${{ needs.deploy.outputs.nlb_dns }} |" >> $GITHUB_STEP_SUMMARY
           echo "| VPC | ${{ needs.deploy.outputs.vpc_id }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Deploy Time | ${{ needs.deploy.outputs.deployed_at }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -560,9 +516,8 @@ jobs:
           # URLs importantes
           echo "## 🔗 URLs Importantes" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Application:** http://${{ needs.deploy.outputs.alb_dns }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Application:** http://${{ needs.deploy.outputs.nlb_dns }}" >> $GITHUB_STEP_SUMMARY
           echo "- **EKS Console:** https://console.aws.amazon.com/eks/home?region=${{ env.AWS_REGION }}#/clusters/${{ needs.deploy.outputs.eks_cluster }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **RDS Console:** https://console.aws.amazon.com/rds/home?region=${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           # Próximos passos
@@ -752,14 +707,13 @@ jobs:
             | Item | Valor |
             |------|-------|
             | Ambiente | ${{ needs.deploy.outputs.environment }} |
-            | RDS | ${{ needs.deploy.outputs.rds_endpoint }} |
-            | ALB | ${{ needs.deploy.outputs.alb_dns }} |
+            | NLB | ${{ needs.deploy.outputs.nlb_dns }} |
             | EKS | ${{ needs.deploy.outputs.eks_cluster }} |
 
             ### 🔗 Links
 
             - [Comparar mudanças](https://github.com/${context.repo.owner}/${context.repo.repo}/compare/${finalVersion})
-            - [Application](http://${{ needs.deploy.outputs.alb_dns }})
+            - [Application](http://${{ needs.deploy.outputs.nlb_dns }})
 
             ---
             *Release finalizada automaticamente após deploy bem-sucedido*`

@@ -44,35 +44,6 @@ output "eks_access_entries" {
   )
 }
 
-# RDS Outputs
-output "rds_endpoint" {
-  description = "Endpoint do RDS (host:port)"
-  value       = module.rds.db_instance_endpoint
-  sensitive   = true
-}
-
-output "rds_address" {
-  description = "Endereço do RDS (host apenas)"
-  value       = module.rds.db_instance_address
-  sensitive   = true
-}
-
-output "rds_port" {
-  description = "Porta do RDS"
-  value       = module.rds.db_instance_port
-}
-
-output "rds_database_name" {
-  description = "Nome do banco de dados"
-  value       = module.rds.db_instance_name
-}
-
-output "rds_username" {
-  description = "Username do banco de dados"
-  value       = module.rds.db_instance_username
-  sensitive   = true
-}
-
 # VPC e Networking Outputs
 output "vpc_id" {
   description = "ID da VPC"
@@ -95,9 +66,9 @@ output "eks_security_group_id" {
   value       = module.security_groups.eks_security_group_id
 }
 
-output "rds_security_group_id" {
-  description = "ID do security group do RDS"
-  value       = module.security_groups.rds_security_group_id
+output "eks_cluster_security_group_id" {
+  description = "ID do security group auto-criado pelo EKS (usado pelo repo oficina-tech-db)"
+  value       = module.eks.cluster_security_group_id
 }
 
 # NLB Outputs - Usado pelo API Gateway
@@ -134,11 +105,6 @@ output "github_secrets_json" {
     EKS_CLUSTER_NAME     = module.eks.cluster_name
     EKS_CLUSTER_ENDPOINT = module.eks.cluster_endpoint
     EKS_CLUSTER_CA       = module.eks.cluster_certificate_authority_data
-    RDS_ENDPOINT         = module.rds.db_instance_endpoint
-    RDS_ADDRESS          = module.rds.db_instance_address
-    RDS_PORT             = tostring(module.rds.db_instance_port)
-    RDS_DATABASE_NAME    = module.rds.db_instance_name
-    RDS_USERNAME         = module.rds.db_instance_username
     VPC_ID               = data.aws_vpc.main.id
     SUBNET_IDS           = join(",", local.filtered_subnet_ids)
     NLB_DNS_NAME         = module.nlb.nlb_dns_name

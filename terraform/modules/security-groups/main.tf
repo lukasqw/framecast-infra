@@ -15,22 +15,6 @@ resource "aws_security_group" "eks" {
   )
 }
 
-resource "aws_security_group" "rds" {
-  name        = "${var.name_prefix}-rds-sg"
-  description = "Security group for RDS database"
-  vpc_id      = var.vpc_id
-
-  tags = merge(
-    var.tags,
-    {
-      Name         = "${var.name_prefix}-rds-sg"
-      ResourceType = "security-group"
-      Service      = "ec2"
-      Purpose      = "rds-database"
-    }
-  )
-}
-
 # EKS Security Group Rules
 resource "aws_vpc_security_group_ingress_rule" "eks_https" {
   security_group_id = aws_security_group.eks.id
@@ -58,28 +42,3 @@ resource "aws_vpc_security_group_ingress_rule" "eks_nodeport" {
   cidr_ipv4         = "0.0.0.0/0"
 }
 
-# RDS Security Group Rules
-resource "aws_vpc_security_group_ingress_rule" "rds_from_eks" {
-  security_group_id            = aws_security_group.rds.id
-  description                  = "PostgreSQL from EKS cluster security group"
-  from_port                    = var.rds_port
-  to_port                      = var.rds_port
-  ip_protocol                  = "tcp"
-  referenced_security_group_id = aws_security_group.eks.id
-}
-
-resource "aws_vpc_security_group_ingress_rule" "rds_from_vpc" {
-  security_group_id = aws_security_group.rds.id
-  description       = "PostgreSQL from VPC CIDR (allows pods to connect)"
-  from_port         = var.rds_port
-  to_port           = var.rds_port
-  ip_protocol       = "tcp"
-  cidr_ipv4         = var.vpc_cidr
-}
-
-resource "aws_vpc_security_group_egress_rule" "rds_all" {
-  security_group_id = aws_security_group.rds.id
-  description       = "Allow all outbound traffic"
-  ip_protocol       = "-1"
-  cidr_ipv4         = "0.0.0.0/0"
-}
