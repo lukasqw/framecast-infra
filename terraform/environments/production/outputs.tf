@@ -100,30 +100,20 @@ output "rds_security_group_id" {
   value       = module.security_groups.rds_security_group_id
 }
 
-output "alb_security_group_id" {
-  description = "ID do security group do ALB"
-  value       = module.security_groups.alb_security_group_id
+# NLB Outputs - Usado pelo API Gateway
+output "nlb_dns_name" {
+  description = "DNS do Network Load Balancer (usado pelo API Gateway)"
+  value       = module.nlb.nlb_dns_name
 }
 
-# ALB Outputs - Usado pelo API Gateway
-output "alb_dns_name" {
-  description = "DNS do Application Load Balancer (usado pelo API Gateway)"
-  value       = module.alb.alb_dns_name
+output "nlb_arn" {
+  description = "ARN do Network Load Balancer"
+  value       = module.nlb.nlb_arn
 }
 
-output "alb_arn" {
-  description = "ARN do Application Load Balancer"
-  value       = module.alb.alb_arn
-}
-
-output "alb_zone_id" {
-  description = "Zone ID do ALB (para Route53)"
-  value       = module.alb.alb_zone_id
-}
-
-output "alb_target_group_arn" {
-  description = "ARN do target group do ALB"
-  value       = module.alb.target_group_arn
+output "nlb_zone_id" {
+  description = "Zone ID do NLB (para Route53)"
+  value       = module.nlb.nlb_zone_id
 }
 
 # General Outputs
@@ -151,7 +141,7 @@ output "github_secrets_json" {
     RDS_USERNAME         = module.rds.db_instance_username
     VPC_ID               = data.aws_vpc.main.id
     SUBNET_IDS           = join(",", local.filtered_subnet_ids)
-    ALB_DNS_NAME         = module.alb.alb_dns_name
+    NLB_DNS_NAME         = module.nlb.nlb_dns_name
     AWS_REGION           = var.aws_region
   })
   sensitive = true

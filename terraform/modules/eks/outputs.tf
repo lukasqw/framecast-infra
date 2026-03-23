@@ -48,3 +48,8 @@ output "node_group_status" {
   description = "Status do node group"
   value       = aws_eks_node_group.this.status
 }
+
+output "node_group_asg_name" {
+  description = "Nome do Auto Scaling Group do managed node group"
+  value       = aws_eks_node_group.this.resources[0].autoscaling_groups[0].name
+}
