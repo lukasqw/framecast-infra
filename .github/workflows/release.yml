@@ -140,6 +140,16 @@ jobs:
             exit 0
           fi
 
+          # Verificar se develop está à frente de main (só relevante ao rodar em develop)
+          if [ "${{ env.IS_DEVELOP }}" == "true" ]; then
+            AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+            if [ "$AHEAD" -eq 0 ]; then
+              echo "has_changes=false" >> $GITHUB_OUTPUT
+              echo "::notice::develop não possui commits à frente de main, nada para criar PR"
+              exit 0
+            fi
+          fi
+
           echo "has_changes=true" >> $GITHUB_OUTPUT
 
           # Determinar tipo de bump
@@ -296,13 +306,15 @@ jobs:
             }
 
             // Criar PR
-            const { data: pr } = await github.rest.pulls.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `🚀 Release ${version}`,
-              head: branchName,
-              base: 'main',
-              body: `## 🚀 Release ${version}
+            let pr;
+            try {
+              ({ data: pr } = await github.rest.pulls.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `🚀 Release ${version}`,
+                head: branchName,
+                base: 'main',
+                body: `## 🚀 Release ${version}
 
             Esta PR finaliza a release candidate e cria a versão final.
 
@@ -339,8 +351,16 @@ jobs:
 
             ---
             *PR criado automaticamente pelo workflow de release*`,
-              draft: false
-            });
+                draft: false
+              }));
+            } catch (error) {
+              if (error.status === 422 && error.message.includes('No commits between')) {
+                console.log(`⚠️ Nenhum commit novo entre main e ${branchName}, PR não necessário`);
+                core.warning(`Branch ${branchName} não possui commits à frente de main. PR não criado.`);
+                return;
+              }
+              throw error;
+            }
 
             console.log(`✅ PR criado: ${pr.html_url}`);
             core.setOutput('pr_url', pr.html_url);
