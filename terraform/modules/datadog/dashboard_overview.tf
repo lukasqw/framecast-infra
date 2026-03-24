@@ -26,7 +26,7 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name  = "p50_lat"
-                query = "p50:http.server.request.duration{service:oficina-tech}"
+                query = "p50:http.server.request.duration{service:oficina-tech,!http.route:/health}"
               }
             }
             display_type = "line"
@@ -44,7 +44,7 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name  = "p95_lat"
-                query = "p95:http.server.request.duration{service:oficina-tech}"
+                query = "p95:http.server.request.duration{service:oficina-tech,!http.route:/health}"
               }
             }
             display_type = "line"
@@ -62,7 +62,7 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name  = "p99_lat"
-                query = "p99:http.server.request.duration{service:oficina-tech}"
+                query = "p99:http.server.request.duration{service:oficina-tech,!http.route:/health}"
               }
             }
             display_type = "line"
@@ -110,13 +110,13 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name  = "p95_route"
-                query = "p95:http.server.request.duration{service:oficina-tech} by {http.route}"
+                query = "p95:http.server.request.duration{service:oficina-tech,!http.route:/health} by {http.route}"
               }
             }
             query {
               metric_query {
                 name  = "p50_route"
-                query = "p50:http.server.request.duration{service:oficina-tech} by {http.route}"
+                query = "p50:http.server.request.duration{service:oficina-tech,!http.route:/health} by {http.route}"
               }
             }
           }
@@ -137,7 +137,7 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name  = "req_rate"
-                query = "sum:http.server.request.count{service:oficina-tech} by {http.route}.as_rate()"
+                query = "sum:http.server.request.count{service:oficina-tech,!http.route:/health} by {http.route}.as_rate()"
               }
             }
             display_type = "line"
@@ -388,14 +388,14 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name       = "success"
-                query      = "sum:http.server.request.count{service:oficina-tech,status_code:2*}.as_count()"
+                query      = "sum:http.server.request.count{service:oficina-tech,status_code:2*,!http.route:/health}.as_count()"
                 aggregator = "sum"
               }
             }
             query {
               metric_query {
                 name       = "total"
-                query      = "sum:http.server.request.count{service:oficina-tech}.as_count()"
+                query      = "sum:http.server.request.count{service:oficina-tech,!http.route:/health}.as_count()"
                 aggregator = "sum"
               }
             }
@@ -433,7 +433,7 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name  = "s2xx"
-                query = "sum:http.server.request.count{service:oficina-tech,status_code:2*}.as_rate()"
+                query = "sum:http.server.request.count{service:oficina-tech,status_code:2*,!http.route:/health}.as_rate()"
               }
             }
             display_type = "line"
@@ -451,7 +451,7 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name  = "s4xx"
-                query = "sum:http.server.request.count{service:oficina-tech,status_code:4*}.as_rate()"
+                query = "sum:http.server.request.count{service:oficina-tech,status_code:4*,!http.route:/health}.as_rate()"
               }
             }
             display_type = "line"
@@ -469,7 +469,7 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name  = "s5xx"
-                query = "sum:http.server.request.count{service:oficina-tech,status_code:5*}.as_rate()"
+                query = "sum:http.server.request.count{service:oficina-tech,status_code:5*,!http.route:/health}.as_rate()"
               }
             }
             display_type = "line"
@@ -537,7 +537,7 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name  = "e5xx"
-                query = "sum:http.server.request.count{service:oficina-tech,status_code:5*}.as_rate()"
+                query = "sum:http.server.request.count{service:oficina-tech,status_code:5*,!http.route:/health}.as_rate()"
               }
             }
             query {
@@ -680,13 +680,13 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name  = "err_count"
-                query = "sum:http.server.request.count{service:oficina-tech,status_code:5*} by {http.route}.as_count()"
+                query = "sum:http.server.request.count{service:oficina-tech,status_code:5*,!http.route:/health} by {http.route}.as_count()"
               }
             }
             query {
               metric_query {
                 name  = "total_count"
-                query = "sum:http.server.request.count{service:oficina-tech} by {http.route}.as_count()"
+                query = "sum:http.server.request.count{service:oficina-tech,!http.route:/health} by {http.route}.as_count()"
               }
             }
           }
