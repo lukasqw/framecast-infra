@@ -11,6 +11,7 @@ O projeto provisiona um cluster EKS v1.31 com node groups auto-scaling, Network 
 ## Estrutura de Pastas
 
 ```
+
 oficina-tech-infra/
 ├── .github/
 │   └── workflows/              # Pipelines CI/CD
