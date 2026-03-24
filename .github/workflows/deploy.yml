@@ -89,6 +89,7 @@ jobs:
         env:
           TF_VAR_datadog_api_key: ${{ secrets.DD_API_KEY }}
           TF_VAR_datadog_app_key: ${{ secrets.DD_APP_KEY }}
+          TF_VAR_datadog_api_url: ${{ secrets.DD_API_URL }}
         run: |
           echo "📋 Gerando plano de execução..."
           terraform plan -out=tfplan -no-color 2>&1 | tee plan.txt
@@ -244,6 +245,7 @@ jobs:
         env:
           TF_VAR_datadog_api_key: ${{ secrets.DD_API_KEY }}
           TF_VAR_datadog_app_key: ${{ secrets.DD_APP_KEY }}
+          TF_VAR_datadog_api_url: ${{ secrets.DD_API_URL }}
         run: |
           echo "🚀 Aplicando mudanças na infraestrutura..."
 
