@@ -875,5 +875,5 @@ resource "datadog_dashboard" "overview" {
     }
   }
 
-  tags = ["service:oficina-tech", "env:production", "team:backend"]
+  tags = ["team:backend"]
 }
