@@ -147,3 +147,18 @@ variable "expiration_date" {
   type        = string
   default     = ""
 }
+
+# Datadog Variables
+variable "datadog_api_key" {
+  description = "Datadog API key para monitors e alertas"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "datadog_app_key" {
+  description = "Datadog Application key para monitors e alertas"
+  type        = string
+  sensitive   = true
+  default     = ""
+}

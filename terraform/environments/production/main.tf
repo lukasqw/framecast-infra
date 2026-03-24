@@ -54,6 +54,15 @@ module "nlb" {
   tags = local.common_tags
 }
 
+# Datadog Monitors (ativo apenas quando as chaves são fornecidas)
+module "datadog" {
+  source = "../../modules/datadog"
+  count  = var.datadog_api_key != "" ? 1 : 0
+
+  datadog_api_key = var.datadog_api_key
+  datadog_app_key = var.datadog_app_key
+}
+
 # Regra adicional: Permitir que o NLB alcance a NodePort no cluster security group (auto-criado pelo EKS)
 resource "aws_vpc_security_group_ingress_rule" "eks_cluster_nodeport" {
   security_group_id = module.eks.cluster_security_group_id
