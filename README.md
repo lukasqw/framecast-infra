@@ -558,6 +558,7 @@ terraform apply
 ### Problemas de Permissão
 
 ```bash
+
 # Verificar access entries
 aws eks list-access-entries --cluster-name EKS-OFICINA-TECH
 
