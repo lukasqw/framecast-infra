@@ -1,10 +1,10 @@
-name: Destroy - Destruir Infraestrutura
+name: Destroy Infrastructure
 
 on:
   workflow_dispatch:
     inputs:
       environment:
-        description: "Ambiente para destruir"
+        description: "Environment"
         required: true
         type: choice
         options:
@@ -12,18 +12,13 @@ on:
           - production
         default: staging
       confirmation:
-        description: 'Digite "DESTROY" para confirmar'
-        required: true
-        type: string
-      reason:
-        description: "Motivo da destruição"
+        description: 'Type "DESTROY" to confirm'
         required: true
         type: string
 
 permissions:
   contents: read
   id-token: write
-  issues: write
 
 concurrency:
   group: terraform-destroy-${{ github.event.inputs.environment }}
@@ -37,122 +32,19 @@ env:
   WORKING_DIR: terraform/environments/${{ github.event.inputs.environment }}
 
 jobs:
-  # ============================================
-  # VALIDAR REQUISIÇÃO
-  # ============================================
-  validate-request:
-    name: Validar Requisição de Destruição
+  destroy:
+    name: Destroy - ${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
-
-    outputs:
-      audit_issue: ${{ steps.create-issue.outputs.issue_number }}
+    environment: ${{ github.event.inputs.environment }}-destroy
 
     steps:
-      - name: Verificar Confirmação
+      - name: Validate confirmation
         run: |
-          echo "🔍 Verificando confirmação..."
-
           if [ "${{ github.event.inputs.confirmation }}" != "DESTROY" ]; then
-            echo "::error::Texto de confirmação deve ser exatamente 'DESTROY'"
-            echo "::error::Recebido: '${{ github.event.inputs.confirmation }}'"
+            echo "::error::Confirmation must be exactly 'DESTROY'"
             exit 1
           fi
 
-          echo "✅ Confirmação validada"
-
-      - name: Verificar Ambiente
-        run: |
-          echo "🔍 Verificando ambiente..."
-
-          ENV="${{ github.event.inputs.environment }}"
-
-          if [ "$ENV" == "production" ]; then
-            echo "::warning::⚠️ ATENÇÃO: Destruindo ambiente de PRODUÇÃO!"
-            echo "::warning::Esta ação é IRREVERSÍVEL!"
-          fi
-
-          echo "Ambiente: $ENV"
-          echo "Motivo: ${{ github.event.inputs.reason }}"
-          echo "Solicitado por: ${{ github.actor }}"
-
-      - name: Criar Issue de Auditoria
-        id: create-issue
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const env = '${{ github.event.inputs.environment }}';
-            const reason = '${{ github.event.inputs.reason }}';
-            const actor = '${{ github.actor }}';
-            const timestamp = new Date().toISOString();
-            const runUrl = '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}';
-
-            const { data: issue } = await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `🔥 Destruição de Infraestrutura - ${env}`,
-              body: `## 🔥 Requisição de Destruição de Infraestrutura
-              
-            ### ⚠️ ALERTA CRÍTICO
-
-            Esta issue documenta uma requisição de destruição de infraestrutura.
-
-            ### 📋 Detalhes
-
-            | Item | Valor |
-            |------|-------|
-            | Ambiente | **${env}** |
-            | Solicitado por | @${actor} |
-            | Motivo | ${reason} |
-            | Timestamp | ${timestamp} |
-            | Workflow Run | [Ver execução](${runUrl}) |
-
-            ### 📝 Ações Realizadas
-
-            - [ ] Validação da requisição
-            - [ ] Backup do state
-            - [ ] Backup dos outputs
-            - [ ] Destruição dos recursos Kubernetes
-            - [ ] Destruição da infraestrutura Terraform
-            - [ ] Verificação da destruição
-
-            ### ⚠️ Importante
-
-            Esta ação é **IRREVERSÍVEL**. Todos os recursos serão permanentemente removidos.
-
-            ---
-            *Issue criada automaticamente para auditoria*`,
-              labels: ['infrastructure', 'destruction', 'audit', env]
-            });
-
-            console.log(\`✅ Issue de auditoria criada: #\${issue.number}\`);
-            core.setOutput('issue_number', issue.number);
-            core.notice(\`Issue de auditoria: #\${issue.number}\`);
-
-      - name: Resumo da Validação
-        run: |
-          echo "## ✅ Validação Concluída" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Item | Valor |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Ambiente | ${{ github.event.inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Confirmação | ✅ Validada |" >> $GITHUB_STEP_SUMMARY
-          echo "| Solicitado por | @${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Motivo | ${{ github.event.inputs.reason }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Issue de Auditoria | #${{ steps.create-issue.outputs.issue_number }} |" >> $GITHUB_STEP_SUMMARY
-
-  # ============================================
-  # BACKUP DO STATE
-  # ============================================
-  backup-state:
-    name: Backup do State
-    needs: validate-request
-    runs-on: ubuntu-latest
-
-    outputs:
-      backup_created: ${{ steps.backup.outputs.created }}
-
-    steps:
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -172,302 +64,19 @@ jobs:
 
       - name: Terraform Init
         working-directory: ${{ env.WORKING_DIR }}
-        run: |
-          echo "🔧 Inicializando Terraform..."
-          terraform init
+        run: terraform init
 
-      - name: Backup State
-        id: backup
-        working-directory: ${{ env.WORKING_DIR }}
-        run: |
-          echo "💾 Fazendo backup do state..."
-
-          mkdir -p /tmp/backup
-
-          # Backup do state
-          terraform state pull > /tmp/backup/terraform-state.json
-
-          # Lista de recursos
-          terraform state list > /tmp/backup/resources-list.txt
-
-          # Outputs atuais
-          terraform output -json > /tmp/backup/outputs.json 2>/dev/null || echo "{}" > /tmp/backup/outputs.json
-
-          # Informações do backup
-          cat > /tmp/backup/backup-info.txt <<EOF
-          Backup criado em: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          Ambiente: ${{ env.ENVIRONMENT }}
-          Solicitado por: ${{ github.actor }}
-          Motivo: ${{ github.event.inputs.reason }}
-          Workflow Run: ${{ github.run_id }}
-          Commit: ${{ github.sha }}
-          EOF
-
-          echo "created=true" >> $GITHUB_OUTPUT
-          echo "✅ Backup criado com sucesso"
-
-      - name: Upload Backup
-        uses: actions/upload-artifact@v4
-        with:
-          name: terraform-backup-${{ env.ENVIRONMENT }}-${{ github.run_id }}
-          path: /tmp/backup/
-          retention-days: 90
-
-      - name: Resumo do Backup
-        run: |
-          echo "## 💾 Backup Criado" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Backup do state e recursos criado com sucesso." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📦 Artefatos" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- terraform-state.json" >> $GITHUB_STEP_SUMMARY
-          echo "- resources-list.txt" >> $GITHUB_STEP_SUMMARY
-          echo "- outputs.json" >> $GITHUB_STEP_SUMMARY
-          echo "- backup-info.txt" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Retenção:** 90 dias" >> $GITHUB_STEP_SUMMARY
-
-  # ============================================
-  # DESTRUIR INFRAESTRUTURA
-  # ============================================
-  destroy-infrastructure:
-    name: Destruir Infraestrutura
-    needs: backup-state
-    runs-on: ubuntu-latest
-    environment:
-      name: ${{ github.event.inputs.environment }}-destroy
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-          terraform_wrapper: false
-
-      - name: Terraform Init
-        working-directory: ${{ env.WORKING_DIR }}
-        run: |
-          echo "🔧 Inicializando Terraform..."
-          terraform init
-
-      - name: Obter Informações do Cluster
-        id: cluster-info
-        working-directory: ${{ env.WORKING_DIR }}
+      - name: Delete Kubernetes resources
         continue-on-error: true
         run: |
-          echo "📊 Obtendo informações do cluster..."
-
-          EKS_CLUSTER=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "")
+          EKS_CLUSTER=$(cd ${{ env.WORKING_DIR }} && terraform output -raw eks_cluster_name 2>/dev/null || echo "")
 
           if [ -n "$EKS_CLUSTER" ]; then
-            echo "cluster_name=$EKS_CLUSTER" >> $GITHUB_OUTPUT
-            echo "has_cluster=true" >> $GITHUB_OUTPUT
-            echo "::notice::Cluster EKS encontrado: $EKS_CLUSTER"
-          else
-            echo "has_cluster=false" >> $GITHUB_OUTPUT
-            echo "::notice::Nenhum cluster EKS encontrado"
+            aws eks update-kubeconfig --name "$EKS_CLUSTER" --region ${{ env.AWS_REGION }}
+            kubectl delete all --all -n ${{ env.NAMESPACE }} --ignore-not-found=true || true
+            kubectl delete namespace ${{ env.NAMESPACE }} --ignore-not-found=true || true
           fi
-
-      - name: Deletar Recursos Kubernetes
-        if: steps.cluster-info.outputs.has_cluster == 'true'
-        continue-on-error: true
-        run: |
-          echo "☸️ Deletando recursos Kubernetes..."
-
-          EKS_CLUSTER="${{ steps.cluster-info.outputs.cluster_name }}"
-
-          # Atualizar kubeconfig
-          aws eks update-kubeconfig \
-            --name "$EKS_CLUSTER" \
-            --region ${{ env.AWS_REGION }}
-
-          # Deletar recursos do namespace
-          kubectl delete all --all -n ${{ env.NAMESPACE }} --ignore-not-found=true || true
-
-          # Deletar namespace
-          kubectl delete namespace ${{ env.NAMESPACE }} --ignore-not-found=true || true
-
-          # Deletar recursos de overlays se existirem
-          if [ -d "kubernetes/overlays/${{ env.ENVIRONMENT }}" ]; then
-            kubectl delete -k kubernetes/overlays/${{ env.ENVIRONMENT }} --ignore-not-found=true || true
-          elif [ -d "kubernetes/overlay" ]; then
-            kubectl delete -k kubernetes/overlay --ignore-not-found=true || true
-          fi
-
-          echo "✅ Recursos Kubernetes deletados"
 
       - name: Terraform Destroy
         working-directory: ${{ env.WORKING_DIR }}
-        run: |
-          echo "🔥 Destruindo infraestrutura..."
-          echo ""
-          echo "⚠️ Esta ação é IRREVERSÍVEL!"
-          echo ""
-
-          terraform destroy -auto-approve
-
-          echo ""
-          echo "✅ Infraestrutura destruída com sucesso"
-
-      - name: Verificar Destruição
-        continue-on-error: true
-        run: |
-          echo "🔍 Verificando destruição..."
-
-          # Verificar se ainda existem recursos
-          # Isso pode ser expandido conforme necessário
-
-          echo "✅ Verificação concluída"
-
-      - name: Resumo da Destruição
-        run: |
-          echo "## 🔥 Infraestrutura Destruída" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "A infraestrutura foi completamente destruída." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Item | Valor |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Ambiente | ${{ env.ENVIRONMENT }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Kubernetes | ${{ steps.cluster-info.outputs.has_cluster == 'true' && '✅ Deletado' || 'N/A' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Terraform | ✅ Destruído |" >> $GITHUB_STEP_SUMMARY
-          echo "| Backup | ✅ Disponível (90 dias) |" >> $GITHUB_STEP_SUMMARY
-
-  # ============================================
-  # ATUALIZAR ISSUE DE AUDITORIA
-  # ============================================
-  update-audit:
-    name: Atualizar Auditoria
-    needs: [validate-request, backup-state, destroy-infrastructure]
-    runs-on: ubuntu-latest
-    if: always()
-
-    steps:
-      - name: Atualizar Issue
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const issueNumber = ${{ needs.validate-request.outputs.audit_issue }};
-            const destroyResult = '${{ needs.destroy-infrastructure.result }}';
-            const backupResult = '${{ needs.backup-state.result }}';
-
-            let statusEmoji = '✅';
-            let statusText = 'Concluída com Sucesso';
-
-            if (destroyResult === 'failure') {
-              statusEmoji = '❌';
-              statusText = 'Falhou';
-            } else if (destroyResult === 'cancelled') {
-              statusEmoji = '⚠️';
-              statusText = 'Cancelada';
-            }
-
-            const comment = \`## ${statusEmoji} Status da Destruição: ${statusText}
-
-            ### 📊 Resultados
-
-            | Job | Status |
-            |-----|--------|
-            | Validação | ✅ Sucesso |
-            | Backup | ${backupResult === 'success' ? '✅' : '❌'} ${backupResult} |
-            | Destruição | ${destroyResult === 'success' ? '✅' : '❌'} ${destroyResult} |
-
-            ### 📦 Backup
-
-            ${backupResult === 'success' ? '✅ Backup criado e disponível por 90 dias' : '❌ Falha ao criar backup'}
-
-            ### 🔗 Links
-
-            - [Workflow Run](https://github.com/\${context.repo.owner}/\${context.repo.repo}/actions/runs/${{ github.run_id }})
-            - [Artefatos](https://github.com/\${context.repo.owner}/\${context.repo.repo}/actions/runs/${{ github.run_id }}#artifacts)
-
-            ---
-            *Atualizado automaticamente em ${new Date().toISOString()}*\`;
-
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issueNumber,
-              body: comment
-            });
-
-            // Fechar issue se destruição foi bem-sucedida
-            if (destroyResult === 'success') {
-              await github.rest.issues.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: issueNumber,
-                state: 'closed',
-                labels: ['infrastructure', 'destruction', 'audit', 'completed']
-              });
-            }
-
-  # ============================================
-  # RESUMO FINAL
-  # ============================================
-  final-summary:
-    name: Resumo Final
-    needs:
-      [validate-request, backup-state, destroy-infrastructure, update-audit]
-    runs-on: ubuntu-latest
-    if: always()
-
-    steps:
-      - name: Gerar Resumo Final
-        run: |
-          echo "# 🔥 Destruição de Infraestrutura" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Status dos jobs
-          echo "## 📊 Status dos Jobs" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Validação | ${{ needs.validate-request.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Backup | ${{ needs.backup-state.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Destruição | ${{ needs.destroy-infrastructure.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Auditoria | ${{ needs.update-audit.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Informações
-          echo "## 📋 Informações" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Item | Valor |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Ambiente | ${{ github.event.inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Solicitado por | @${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Motivo | ${{ github.event.inputs.reason }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Issue de Auditoria | #${{ needs.validate-request.outputs.audit_issue }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Timestamp | $(date -u +"%Y-%m-%dT%H:%M:%SZ") |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Status geral
-          if [ "${{ needs.destroy-infrastructure.result }}" == "success" ]; then
-            echo "## ✅ Destruição Concluída" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "A infraestrutura foi completamente destruída." >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 💾 Backup" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "Backup do state e recursos disponível por 90 dias nos artefatos." >> $GITHUB_STEP_SUMMARY
-          else
-            echo "## ❌ Destruição Falhou" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "Houve um erro durante a destruição. Verifique os logs acima." >> $GITHUB_STEP_SUMMARY
-          fi
-
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "**⚠️ ATENÇÃO:** Esta ação é irreversível!" >> $GITHUB_STEP_SUMMARY
+        run: terraform destroy -auto-approve
