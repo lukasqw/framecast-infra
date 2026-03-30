@@ -1,12 +1,12 @@
-name: Deploy
+name: Rollback Infrastructure
 
 on:
-  pull_request:
-    types: [ closed ]
-    branches:
-      - main
   workflow_dispatch:
     inputs:
+      version:
+        description: 'Version to rollback to (e.g. v1.2.3) — must be an existing tag'
+        required: true
+        type: string
       environment:
         description: 'Target environment'
         required: false
@@ -17,10 +17,10 @@ on:
         default: production
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
   id-token: write
 
+# Same concurrency group as deploy — prevents a rollback from running alongside a deploy.
 concurrency:
   group: deploy
   cancel-in-progress: false
@@ -28,48 +28,40 @@ concurrency:
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   ENVIRONMENT: ${{ github.event.inputs.environment || 'production' }}
-  # Repository Variables — configure in Settings → Secrets and Variables → Variables
-  # Required: AWS_REGION, TF_VERSION, TF_WORKING_DIR, K8S_NAMESPACE
-  # Optional: HEALTH_ENDPOINT (default: /health)
 
 jobs:
-  # ===========================================
-  # STAGE 1: Deploy Infrastructure
-  # ===========================================
-  deploy:
-    name: Deploy Infrastructure
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/'))
+  rollback:
+    name: Rollback to ${{ github.event.inputs.version }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment:
       name: ${{ github.event.inputs.environment || 'production' }}
 
-    outputs:
-      version: ${{ steps.version.outputs.VERSION }}
-      eks_cluster: ${{ steps.apply.outputs.eks_cluster }}
-      nlb_dns: ${{ steps.apply.outputs.nlb_dns }}
-      vpc_id: ${{ steps.apply.outputs.vpc_id }}
-
     steps:
-      - name: Checkout
+      - name: Validate Version Format
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version format: '$VERSION'. Expected format: v1.2.3"
+            exit 1
+          fi
+
+      # Checkout at the specific tag so Terraform code and actions
+      # match exactly what was applied at that version.
+      - name: Checkout at ${{ github.event.inputs.version }}
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.inputs.version }}
           fetch-depth: 0
-          ref: main
 
-      - name: Extract Version
-        id: version
+      - name: Validate Tag Exists
         run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            TAG=$(git tag --sort=-v:refname | head -n 1 || echo "v0.0.0")
-          else
-            BRANCH="${{ github.event.pull_request.head.ref }}"
-            TAG="${BRANCH#release/}"
+          VERSION="${{ github.event.inputs.version }}"
+          if ! git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "::error::Tag '$VERSION' does not exist in this repository"
+            exit 1
           fi
-          echo "VERSION=$TAG" >> $GITHUB_OUTPUT
-          echo "::notice::Version: $TAG"
+          echo "::notice::Rolling back to $VERSION ($(git rev-parse --short $VERSION))"
 
       - name: Validate Required Secrets
         run: |
@@ -82,7 +74,9 @@ jobs:
             exit 1
           fi
 
-      - name: Apply Infrastructure
+      # plan_sha is intentionally omitted — rollback always generates a fresh plan
+      # against the checked-out tag to avoid applying a stale/mismatched artifact.
+      - name: Apply Infrastructure at ${{ github.event.inputs.version }}
         id: apply
         uses: ./.github/actions/deploy/tf-apply
         with:
@@ -101,7 +95,6 @@ jobs:
           dd_app_key: ${{ secrets.DD_APP_KEY }}
           dd_api_url: ${{ secrets.DD_API_URL }}
           k8s_namespace: ${{ vars.K8S_NAMESPACE }}
-          plan_sha: ${{ github.event.pull_request.head.sha }}
 
       - name: Post-Deploy Health Check
         uses: ./.github/actions/deploy/post-check
@@ -112,31 +105,24 @@ jobs:
           k8s_namespace: ${{ vars.K8S_NAMESPACE }}
           health_endpoint: ${{ vars.HEALTH_ENDPOINT || '/health' }}
 
-      # Tag is created only after a successful health check — a tag represents
-      # exactly what is confirmed running in production. Skipped on workflow_dispatch
-      # since that redeploys an existing version without creating a new tag.
-      - name: Finalize Release Tag
-        if: github.event_name != 'workflow_dispatch'
-        uses: ./.github/actions/release/finalize-tag
-        with:
-          version: ${{ steps.version.outputs.VERSION }}
-
-      - name: Deployment Summary
+      - name: Rollback Summary
         if: always()
         run: |
           {
-            echo "## Deployment Summary"
+            echo "## Rollback Summary"
             echo ""
             echo "| Resource | Value |"
             echo "|----------|-------|"
-            echo "| Version | \`${{ steps.version.outputs.VERSION }}\` |"
+            echo "| Rolled back to | \`${{ github.event.inputs.version }}\` |"
             echo "| Environment | \`${{ env.ENVIRONMENT }}\` |"
             echo "| EKS Cluster | \`${{ steps.apply.outputs.eks_cluster }}\` |"
-            echo "| Region | \`${{ env.AWS_REGION }}\` |"
             echo "| NLB DNS | \`${{ steps.apply.outputs.nlb_dns }}\` |"
-            echo "| VPC | \`${{ steps.apply.outputs.vpc_id }}\` |"
+            echo "| Region | \`${{ env.AWS_REGION }}\` |"
             echo ""
-            echo "**Endpoints:**"
-            echo "- Application: http://${{ steps.apply.outputs.nlb_dns }}"
-            echo "- Health: http://${{ steps.apply.outputs.nlb_dns }}${{ vars.HEALTH_ENDPOINT || '/health' }}"
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Actor | @${{ github.actor }} |"
+            echo "| Run | [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |"
+            echo ""
+            echo "> **Note:** No new tag was created. The rollback applied the Terraform state from \`${{ github.event.inputs.version }}\`."
           } >> $GITHUB_STEP_SUMMARY

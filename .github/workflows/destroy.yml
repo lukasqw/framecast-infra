@@ -32,6 +32,7 @@ jobs:
   destroy:
     name: Destroy — ${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     environment: ${{ github.event.inputs.environment }}-destroy
 
     steps:
