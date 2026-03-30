@@ -48,7 +48,7 @@ push to develop (terraform/** ou kubernetes/**)
 │   ├── update-pr/      Sincroniza branch de release com develop e atualiza changelog
 │   └── finalize-tag/   Cria tag anotada após health check confirmado em produção
 └── deploy/
-    ├── tf-apply/       init + cleanup K8s não-Helm + terraform apply + get outputs + kubectl overlays
+    ├── tf-apply/       init + plan/artifact reuse + show + apply + kubectl overlays
     └── post-check/     Verifica EKS cluster (nodes, pods) + NLB endpoint
 ```
 

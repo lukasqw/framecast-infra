@@ -61,8 +61,9 @@ runs:
         echo "::notice::EKS cluster is healthy"
 
     # Probes the NLB endpoint with up to 5 retries (60s apart) to account for
-    # NLB warmup time after provisioning (~2-5 min). Accepts any HTTP response
-    # (200, 404, 5xx) as "reachable" — connection errors (000) trigger a retry.
+    # NLB warmup time after provisioning (~2-5 min). Any HTTP response confirms
+    # the NLB is reachable — connection errors (000) trigger a retry.
+    # 5xx responses emit a warning: the NLB is up but the app may be degraded.
     - name: Check NLB Endpoint
       shell: bash
       env:
@@ -82,8 +83,13 @@ runs:
 
           echo "Attempt $i/$MAX_RETRIES — HTTP status: $HTTP_CODE"
 
-          if [ "$HTTP_CODE" != "000" ]; then
+          if [[ "$HTTP_CODE" =~ ^[23] ]]; then
             echo "::notice::NLB responded with HTTP $HTTP_CODE"
+            exit 0
+          fi
+
+          if [[ "$HTTP_CODE" =~ ^[45] ]]; then
+            echo "::warning::NLB returned HTTP $HTTP_CODE — load balancer is reachable but the application may be degraded"
             exit 0
           fi
 
