@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: "Environment"
+        description: 'Environment to destroy'
         required: true
         type: choice
         options:
@@ -25,20 +25,17 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: us-east-1
-  TF_VERSION: 1.7.0
-  NAMESPACE: app-oficina-tech
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   ENVIRONMENT: ${{ github.event.inputs.environment }}
-  WORKING_DIR: terraform/environments/${{ github.event.inputs.environment }}
 
 jobs:
   destroy:
-    name: Destroy - ${{ github.event.inputs.environment }}
+    name: Destroy — ${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment }}-destroy
 
     steps:
-      - name: Validate confirmation
+      - name: Validate Confirmation
         run: |
           if [ "${{ github.event.inputs.confirmation }}" != "DESTROY" ]; then
             echo "::error::Confirmation must be exactly 'DESTROY'"
@@ -59,24 +56,25 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: ${{ env.TF_VERSION }}
+          terraform_version: ${{ vars.TF_VERSION || '1.7.0' }}
           terraform_wrapper: false
 
       - name: Terraform Init
-        working-directory: ${{ env.WORKING_DIR }}
+        working-directory: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
         run: terraform init
 
-      - name: Delete Kubernetes resources
+      - name: Delete Kubernetes Resources
         continue-on-error: true
         run: |
-          EKS_CLUSTER=$(cd ${{ env.WORKING_DIR }} && terraform output -raw eks_cluster_name 2>/dev/null || echo "")
+          EKS_CLUSTER=$(cd "${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}" \
+            && terraform output -raw eks_cluster_name 2>/dev/null || echo "")
 
           if [ -n "$EKS_CLUSTER" ]; then
-            aws eks update-kubeconfig --name "$EKS_CLUSTER" --region ${{ env.AWS_REGION }}
-            kubectl delete all --all -n ${{ env.NAMESPACE }} --ignore-not-found=true || true
-            kubectl delete namespace ${{ env.NAMESPACE }} --ignore-not-found=true || true
+            aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "${{ env.AWS_REGION }}"
+            kubectl delete all --all -n ${{ vars.K8S_NAMESPACE }} --ignore-not-found=true || true
+            kubectl delete namespace ${{ vars.K8S_NAMESPACE }} --ignore-not-found=true || true
           fi
 
       - name: Terraform Destroy
-        working-directory: ${{ env.WORKING_DIR }}
+        working-directory: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
         run: terraform destroy -auto-approve

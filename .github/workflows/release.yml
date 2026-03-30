@@ -1,919 +1,120 @@
-name: Release - Gerenciamento Automático de Versões
+name: Create Release
 
 on:
   push:
     branches:
       - develop
+    paths:
+      - "terraform/**"
+      - "kubernetes/**"
   workflow_dispatch:
     inputs:
-      bump_type:
-        description: "Tipo de versão"
-        required: false
+      release_type:
+        description: 'Release type — push auto-detects from conventional commits; this input is only used on workflow_dispatch'
+        required: true
         type: choice
         options:
-          - auto
-          - major
-          - minor
           - patch
-        default: auto
-      branch:
-        description: "Branch de origem"
-        required: false
-        type: choice
-        options:
-          - develop
-          - main
-        default: develop
+          - minor
+          - major
+        default: 'minor'
 
 permissions:
   contents: write
   pull-requests: write
-  issues: write
+  issues: write  # required for gh label create
 
-env:
-  AWS_REGION: us-east-1
-  IS_DEVELOP: ${{ github.ref == 'refs/heads/develop' || github.event.inputs.branch == 'develop' }}
-  IS_MAIN: ${{ github.ref == 'refs/heads/main' || github.event.inputs.branch == 'main' }}
+concurrency:
+  group: release
+  cancel-in-progress: false  # never cancel a release in progress
 
 jobs:
-  # ============================================
-  # CALCULAR PRÓXIMA VERSÃO
-  # ============================================
-  calculate-version:
-    name: Calcular Próxima Versão
+  release-pr:
+    name: Manage Release PR
     runs-on: ubuntu-latest
-
-    outputs:
-      version: ${{ steps.bump.outputs.version }}
-      tag_version: ${{ steps.bump.outputs.tag_version }}
-      previous_version: ${{ steps.current.outputs.version }}
-      bump_type: ${{ steps.bump.outputs.bump_type }}
-      has_changes: ${{ steps.bump.outputs.has_changes }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-
-      - name: Obter Versão Atual
-        id: current
-        run: |
-          echo "🔍 Buscando última tag..."
-
-          # Obter última tag
-          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          echo "version=$LAST_TAG" >> $GITHUB_OUTPUT
-          echo "::notice::Versão atual: $LAST_TAG"
-
-          # Extrair números
-          VERSION_NUMBER="${LAST_TAG#v}"
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION_NUMBER"
-
-          echo "major=$MAJOR" >> $GITHUB_OUTPUT
-          echo "minor=$MINOR" >> $GITHUB_OUTPUT
-          echo "patch=$PATCH" >> $GITHUB_OUTPUT
-
-      - name: Analisar Commits
-        id: analyze
-        run: |
-          LAST_TAG="${{ steps.current.outputs.version }}"
-
-          echo "📝 Analisando commits desde $LAST_TAG..."
-
-          # Obter commits desde última tag
-          if [ "$LAST_TAG" == "v0.0.0" ]; then
-            COMMITS=$(git log --pretty=format:"%s" --no-merges)
-          else
-            COMMITS=$(git log ${LAST_TAG}..HEAD --pretty=format:"%s" --no-merges)
-          fi
-
-          if [ -z "$COMMITS" ]; then
-            echo "has_commits=false" >> $GITHUB_OUTPUT
-            echo "::notice::Nenhum commit novo desde $LAST_TAG"
-            exit 0
-          fi
-
-          echo "has_commits=true" >> $GITHUB_OUTPUT
-
-          # Analisar tipo de mudança baseado em conventional commits
-          HAS_BREAKING=false
-          HAS_FEAT=false
-          HAS_FIX=false
-
-          while IFS= read -r commit; do
-            if [[ "$commit" =~ ^.*BREAKING[[:space:]]CHANGE.*$ ]] || [[ "$commit" =~ ^[a-z]+\!: ]]; then
-              HAS_BREAKING=true
-            elif [[ "$commit" =~ ^feat(\(.+\))?: ]]; then
-              HAS_FEAT=true
-            elif [[ "$commit" =~ ^fix(\(.+\))?: ]]; then
-              HAS_FIX=true
-            fi
-          done <<< "$COMMITS"
-
-          # Determinar tipo de bump
-          if [ "$HAS_BREAKING" = true ]; then
-            BUMP_TYPE="major"
-          elif [ "$HAS_FEAT" = true ]; then
-            BUMP_TYPE="minor"
-          elif [ "$HAS_FIX" = true ]; then
-            BUMP_TYPE="patch"
-          else
-            BUMP_TYPE="patch"
-          fi
-
-          echo "bump_type=$BUMP_TYPE" >> $GITHUB_OUTPUT
-          echo "::notice::Tipo de bump detectado: $BUMP_TYPE"
-
-      - name: Calcular Nova Versão
-        id: bump
-        run: |
-          MAJOR=${{ steps.current.outputs.major }}
-          MINOR=${{ steps.current.outputs.minor }}
-          PATCH=${{ steps.current.outputs.patch }}
-
-          HAS_COMMITS="${{ steps.analyze.outputs.has_commits }}"
-
-          if [ "$HAS_COMMITS" != "true" ]; then
-            echo "has_changes=false" >> $GITHUB_OUTPUT
-            echo "::notice::Nenhuma mudança para release"
-            exit 0
-          fi
-
-          # Verificar se develop está à frente de main (só relevante ao rodar em develop)
-          if [ "${{ env.IS_DEVELOP }}" == "true" ]; then
-            AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
-            if [ "$AHEAD" -eq 0 ]; then
-              echo "has_changes=false" >> $GITHUB_OUTPUT
-              echo "::notice::develop não possui commits à frente de main, nada para criar PR"
-              exit 0
-            fi
-          fi
-
-          echo "has_changes=true" >> $GITHUB_OUTPUT
-
-          # Determinar tipo de bump
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ "${{ github.event.inputs.bump_type }}" != "auto" ]; then
-            BUMP_TYPE="${{ github.event.inputs.bump_type }}"
-          else
-            BUMP_TYPE="${{ steps.analyze.outputs.bump_type }}"
-          fi
-
-          echo "bump_type=$BUMP_TYPE" >> $GITHUB_OUTPUT
-
-          # Calcular nova versão
-          case $BUMP_TYPE in
-            major)
-              MAJOR=$((MAJOR + 1))
-              MINOR=0
-              PATCH=0
-              ;;
-            minor)
-              MINOR=$((MINOR + 1))
-              PATCH=0
-              ;;
-            patch)
-              PATCH=$((PATCH + 1))
-              ;;
-          esac
-
-          NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
-
-          # Se for develop, adicionar sufixo -rc apenas na tag (não na branch)
-          if [ "${{ env.IS_DEVELOP }}" == "true" ]; then
-            TAG_VERSION="${NEW_VERSION}-rc"
-            echo "is_release_candidate=true" >> $GITHUB_OUTPUT
-          else
-            TAG_VERSION="$NEW_VERSION"
-            echo "is_release_candidate=false" >> $GITHUB_OUTPUT
-          fi
-
-          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
-          echo "tag_version=$TAG_VERSION" >> $GITHUB_OUTPUT
-          echo "::notice::Nova versão: $NEW_VERSION (tag: $TAG_VERSION)"
-
-      - name: Resumo da Versão
-        if: steps.bump.outputs.has_changes == 'true'
-        run: |
-          echo "## 🔢 Nova Versão Calculada" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Item | Valor |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Versão Anterior | ${{ steps.current.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Nova Versão | ${{ steps.bump.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Tipo de Bump | ${{ steps.bump.outputs.bump_type }} |" >> $GITHUB_STEP_SUMMARY
-
-  # ============================================
-  # CRIAR TAG E BRANCH DE RELEASE (DEVELOP)
-  # ============================================
-  create-release-candidate:
-    name: Criar Release Candidate
-    needs: calculate-version
-    runs-on: ubuntu-latest
-    if: needs.calculate-version.outputs.has_changes == 'true' && github.ref == 'refs/heads/develop'
-
-    outputs:
-      branch_name: ${{ steps.create.outputs.branch_name }}
-      tag_created: ${{ steps.tag.outputs.created }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+          fetch-depth: 0  # required for git tag history and changelog
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configurar Git
+      # Checks if there is already an open PR from a release/* branch to main.
+      # This determines which path the workflow takes:
+      #   - PR exists  → PATH A: sync develop + update changelog
+      #   - No PR      → PATH B: calculate version + create release branch + open draft PR
+      - name: Check for Open Release PR
+        id: check_pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          PR_DATA=$(gh pr list \
+            --base main \
+            --state open \
+            --json number,headRefName \
+            | jq -r '.[] | select(.headRefName | startswith("release/")) | "\(.number)|\(.headRefName)"' \
+            | head -1)
 
-      - name: Criar Tag RC
-        id: tag
-        run: |
-          TAG_VERSION="${{ needs.calculate-version.outputs.tag_version }}"
-          VERSION="${{ needs.calculate-version.outputs.version }}"
-
-          echo "🏷️ Criando tag de release candidate $TAG_VERSION..."
-
-          # Verificar se tag já existe
-          if git rev-parse "$TAG_VERSION" >/dev/null 2>&1; then
-            echo "::warning::Tag $TAG_VERSION já existe"
-            echo "created=false" >> $GITHUB_OUTPUT
+          if [ -n "$PR_DATA" ]; then
+            PR_NUMBER=$(echo "$PR_DATA" | cut -d'|' -f1)
+            PR_BRANCH=$(echo "$PR_DATA" | cut -d'|' -f2)
+            echo "has_open_pr=true"    >> $GITHUB_OUTPUT
+            echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+            echo "pr_branch=$PR_BRANCH" >> $GITHUB_OUTPUT
+            echo "::notice::Open release PR found: #$PR_NUMBER ($PR_BRANCH)"
           else
-            # Criar tag anotada
-            git tag -a "$TAG_VERSION" -m "Release Candidate $VERSION
-
-            Tipo: ${{ needs.calculate-version.outputs.bump_type }}
-            Versão anterior: ${{ needs.calculate-version.outputs.previous_version }}
-            Criado por: ${{ github.actor }}
-            Commit: ${{ github.sha }}
-            
-            ⚠️ Esta é uma release candidate. Aguardando validação para release final."
-
-            git push origin "$TAG_VERSION"
-
-            echo "created=true" >> $GITHUB_OUTPUT
-            echo "::notice::Tag RC $TAG_VERSION criada com sucesso"
+            echo "has_open_pr=false" >> $GITHUB_OUTPUT
+            echo "::notice::No open release PR — will create a new release"
           fi
 
-      - name: Criar Branch de Release
+      # PATH A: Release PR already exists → sync develop into the release branch
+      #         and refresh the PR changelog. Version stays the same.
+      - name: Update existing release PR
+        if: steps.check_pr.outputs.has_open_pr == 'true'
+        uses: ./.github/actions/release/update-pr
+        with:
+          pr_number: ${{ steps.check_pr.outputs.pr_number }}
+          pr_branch: ${{ steps.check_pr.outputs.pr_branch }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          source_branch: ${{ vars.SOURCE_BRANCH || 'develop' }}
+
+      # PATH B: No open PR → detect version, validate guards,
+      #         create release branch and open a draft PR to main.
+      - name: Create new release PR
+        if: steps.check_pr.outputs.has_open_pr == 'false'
         id: create
-        run: |
-          VERSION="${{ needs.calculate-version.outputs.version }}"
-          # Remover sufixo -rc do nome da branch
-          VERSION_CLEAN="${VERSION%-rc}"
-          BRANCH_NAME="release/$VERSION_CLEAN"
-
-          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
-
-          # Verificar se branch já existe
-          if git ls-remote --heads origin "$BRANCH_NAME" | grep -q "$BRANCH_NAME"; then
-            echo "::warning::Branch $BRANCH_NAME já existe"
-          else
-            # Criar branch a partir da develop
-            git checkout -b "$BRANCH_NAME"
-            git push origin "$BRANCH_NAME"
-
-            echo "::notice::Branch $BRANCH_NAME criada com sucesso"
-          fi
-
-      - name: Criar Pull Request para Main
-        id: create-pr
-        uses: actions/github-script@v7
+        uses: ./.github/actions/release/create-pr
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const version = '${{ needs.calculate-version.outputs.version }}';
-            const branchName = '${{ steps.create.outputs.branch_name }}';
-            const bumpType = '${{ needs.calculate-version.outputs.bump_type }}';
-            const previousVersion = '${{ needs.calculate-version.outputs.previous_version }}';
+          release_type: ${{ github.event.inputs.release_type }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          base_branch: ${{ vars.BASE_BRANCH || 'main' }}
+          source_branch: ${{ vars.SOURCE_BRANCH || 'develop' }}
 
-            // Verificar se PR já existe
-            const { data: existingPRs } = await github.rest.pulls.list({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              head: `${context.repo.owner}:${branchName}`,
-              base: 'main',
-              state: 'open'
-            });
-
-            if (existingPRs.length > 0) {
-              console.log(`PR já existe: ${existingPRs[0].html_url}`);
-              core.setOutput('pr_url', existingPRs[0].html_url);
-              core.setOutput('pr_number', existingPRs[0].number);
-              return;
-            }
-
-            // Criar PR
-            let pr;
-            try {
-              ({ data: pr } = await github.rest.pulls.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: `🚀 Release ${version}`,
-                head: branchName,
-                base: 'main',
-                body: `## 🚀 Release ${version}
-
-            Esta PR finaliza a release candidate e cria a versão final.
-
-            ### 📋 Informações
-
-            | Item | Valor |
-            |------|-------|
-            | Versão | ${version} |
-            | Tipo | ${bumpType} |
-            | Versão Anterior | ${previousVersion} |
-            | Branch | \`${branchName}\` |
-
-            ### ✅ Checklist
-
-            - [ ] Changelog revisado
-            - [ ] Testes executados com sucesso
-            - [ ] Validação em staging concluída
-            - [ ] Documentação atualizada
-            - [ ] Breaking changes documentados (se aplicável)
-
-            ### 🔄 O que acontece ao fazer merge
-
-            1. Tag RC (\`${version}\`) será removida
-            2. Tag final será criada (ex: \`v1.2.0\`)
-            3. GitHub Release será atualizada para versão final
-            4. Branch de release será atualizada
-
-            ### 📝 Próximos Passos Após Merge
-
-            1. Deploy em staging
-            2. Validação em staging
-            3. Deploy em produção
-            4. Monitoramento de métricas
-
-            ---
-            *PR criado automaticamente pelo workflow de release*`,
-                draft: false
-              }));
-            } catch (error) {
-              if (error.status === 422 && error.message.includes('No commits between')) {
-                console.log(`⚠️ Nenhum commit novo entre main e ${branchName}, PR não necessário`);
-                core.warning(`Branch ${branchName} não possui commits à frente de main. PR não criado.`);
-                return;
-              }
-              throw error;
-            }
-
-            console.log(`✅ PR criado: ${pr.html_url}`);
-            core.setOutput('pr_url', pr.html_url);
-            core.setOutput('pr_number', pr.number);
-            core.notice(`PR criado: ${pr.html_url}`);
-
-            // Aguardar um momento para o PR ser processado completamente
-            await new Promise(resolve => setTimeout(resolve, 2000));
-
-            // Adicionar labels
-            try {
-              await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: pr.number,
-                labels: ['release', version, 'automated']
-              });
-              console.log('✅ Labels adicionadas com sucesso');
-            } catch (error) {
-              console.log(`⚠️ Erro ao adicionar labels: ${error.message}`);
-              core.warning(`Não foi possível adicionar labels: ${error.message}`);
-            }
-
-      - name: Resumo
+      - name: Job Summary
+        if: always()
         run: |
-          echo "## 🏷️ Release Candidate Criado" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Item | Valor |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Versão | ${{ needs.calculate-version.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Tag RC | ${{ needs.calculate-version.outputs.tag_version }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Branch | ${{ steps.create.outputs.branch_name }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Tipo | ${{ needs.calculate-version.outputs.bump_type }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| PR | ${{ steps.create-pr.outputs.pr_url }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "⚠️ **Próximo passo:** Revisar e fazer merge do PR #${{ steps.create-pr.outputs.pr_number }} para finalizar a release" >> $GITHUB_STEP_SUMMARY
-
-  # ============================================
-  # FINALIZAR RELEASE (MAIN)
-  # ============================================
-  finalize-release:
-    name: Finalizar Release
-    needs: calculate-version
-    runs-on: ubuntu-latest
-    if: needs.calculate-version.outputs.has_changes == 'true' && github.ref == 'refs/heads/main'
-
-    outputs:
-      branch_name: ${{ steps.create.outputs.branch_name }}
-      tag_created: ${{ steps.tag.outputs.created }}
-      final_version: ${{ steps.finalize.outputs.final_version }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Configurar Git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Remover Tag RC e Criar Tag Final
-        id: finalize
-        run: |
-          VERSION="${{ needs.calculate-version.outputs.version }}"
-          TAG_RC="${VERSION}-rc"
-
-          echo "final_version=$VERSION" >> $GITHUB_OUTPUT
-
-          echo "🏷️ Finalizando release: $TAG_RC → $VERSION..."
-
-          # Deletar tag RC se existir
-          if git rev-parse "$TAG_RC" >/dev/null 2>&1; then
-            echo "Removendo tag RC $TAG_RC..."
-            git push --delete origin "$TAG_RC" || true
-            git tag -d "$TAG_RC" || true
-          fi
-
-          # Verificar se tag final já existe
-          if git rev-parse "$VERSION" >/dev/null 2>&1; then
-            echo "::warning::Tag $VERSION já existe"
-            echo "created=false" >> $GITHUB_OUTPUT
-          else
-            # Criar tag final
-            git tag -a "$VERSION" -m "Release $VERSION
-
-            Tipo: ${{ needs.calculate-version.outputs.bump_type }}
-            Versão anterior: ${{ needs.calculate-version.outputs.previous_version }}
-            Criado por: ${{ github.actor }}
-            Commit: ${{ github.sha }}
-            
-            ✅ Release finalizada e validada."
-
-            git push origin "$VERSION"
-
-            echo "created=true" >> $GITHUB_OUTPUT
-            echo "::notice::Tag final $VERSION criada com sucesso"
-          fi
-
-      - name: Atualizar Branch de Release
-        id: create
-        run: |
-          VERSION="${{ steps.finalize.outputs.final_version }}"
-          BRANCH_NAME="release/$VERSION"
-
-          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
-
-          # Verificar se branch existe
-          if git ls-remote --heads origin "$BRANCH_NAME" | grep -q "$BRANCH_NAME"; then
-            echo "Atualizando branch $BRANCH_NAME..."
-            git checkout "$BRANCH_NAME"
-            git merge --ff-only main
-            git push origin "$BRANCH_NAME"
-          else
-            echo "Criando branch $BRANCH_NAME..."
-            git checkout -b "$BRANCH_NAME"
-            git push origin "$BRANCH_NAME"
-          fi
-
-          echo "::notice::Branch $BRANCH_NAME atualizada"
-
-      - name: Atualizar PR
-        id: update-pr
-        uses: actions/github-script@v7
-        continue-on-error: true
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const finalVersion = '${{ steps.finalize.outputs.final_version }}';
-            const branchName = '${{ steps.create.outputs.branch_name }}';
-
-            // Buscar PR que foi merged
-            const { data: prs } = await github.rest.pulls.list({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              head: `${context.repo.owner}:${branchName}`,
-              base: 'main',
-              state: 'closed'
-            });
-
-            if (prs.length === 0) {
-              console.log('Nenhum PR encontrado');
-              return;
-            }
-
-            const pr = prs[0];
-
-            // Adicionar comentário no PR
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: pr.number,
-              body: `## ✅ Release Finalizada
-
-            A release foi finalizada com sucesso!
-
-            ### 📦 Versão Final
-
-            - **Tag:** \`${finalVersion}\`
-            - **Release:** [Ver Release](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/tag/${finalVersion})
-
-            ### 🔗 Links
-
-            - [Comparar mudanças](https://github.com/${context.repo.owner}/${context.repo.repo}/compare/${finalVersion})
-            - [Branch de release](https://github.com/${context.repo.owner}/${context.repo.repo}/tree/${branchName})
-
-            ---
-            *Comentário adicionado automaticamente pelo workflow de release*`
-            });
-
-            console.log(\`✅ PR #\${pr.number} atualizado\`);
-
-      - name: Resumo
-        run: |
-          echo "## ✅ Release Finalizada" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Item | Valor |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Tag Final | ${{ steps.finalize.outputs.final_version }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Branch | ${{ steps.create.outputs.branch_name }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Tipo | ${{ needs.calculate-version.outputs.bump_type }} |" >> $GITHUB_STEP_SUMMARY
-
-  # ============================================
-  # GERAR CHANGELOG
-  # ============================================
-  generate-changelog:
-    name: Gerar Changelog
-    needs: [calculate-version]
-    runs-on: ubuntu-latest
-    if: |
-      always() && 
-      needs.calculate-version.outputs.has_changes == 'true' &&
-      (needs.create-release-candidate.result == 'success' || 
-       needs.finalize-release.result == 'success' ||
-       needs.create-release-candidate.result == 'skipped' ||
-       needs.finalize-release.result == 'skipped')
-
-    outputs:
-      changelog: ${{ steps.changelog.outputs.changelog }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Gerar Changelog
-        id: changelog
-        run: |
-          VERSION="${{ needs.calculate-version.outputs.version }}"
-          PREVIOUS_VERSION="${{ needs.calculate-version.outputs.previous_version }}"
-
-          echo "📝 Gerando changelog para $VERSION..."
-
-          # Obter commits desde versão anterior
-          if [ "$PREVIOUS_VERSION" == "v0.0.0" ]; then
-            echo "::notice::Primeira release, usando todos os commits"
-            COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges)
-          else
-            echo "::notice::Comparando com versão anterior: $PREVIOUS_VERSION"
-            COMMITS=$(git log ${PREVIOUS_VERSION}..HEAD --pretty=format:"- %s (%h)" --no-merges)
-          fi
-
-          # Categorizar commits
-          BREAKING_CHANGES=""
-          FEATURES=""
-          FIXES=""
-          OTHERS=""
-
-          while IFS= read -r commit; do
-            if [[ "$commit" =~ BREAKING[[:space:]]CHANGE ]] || [[ "$commit" =~ \! ]]; then
-              BREAKING_CHANGES="${BREAKING_CHANGES}${commit}\n"
-            elif [[ "$commit" =~ ^-[[:space:]]feat ]]; then
-              FEATURES="${FEATURES}${commit}\n"
-            elif [[ "$commit" =~ ^-[[:space:]]fix ]]; then
-              FIXES="${FIXES}${commit}\n"
-            else
-              OTHERS="${OTHERS}${commit}\n"
-            fi
-          done <<< "$COMMITS"
-
-          # Criar changelog estruturado
-          CHANGELOG="## 🚀 Release $VERSION
-
-          **Tipo:** ${{ needs.calculate-version.outputs.bump_type }}
-          **Versão anterior:** $PREVIOUS_VERSION
-          "
-
-          if [ -n "$BREAKING_CHANGES" ]; then
-            CHANGELOG="${CHANGELOG}
-
-          ### ⚠️ Breaking Changes
-
-          ${BREAKING_CHANGES}"
-          fi
-
-          if [ -n "$FEATURES" ]; then
-            CHANGELOG="${CHANGELOG}
-
-          ### ✨ Novas Funcionalidades
-
-          ${FEATURES}"
-          fi
-
-          if [ -n "$FIXES" ]; then
-            CHANGELOG="${CHANGELOG}
-
-          ### 🐛 Correções
-
-          ${FIXES}"
-          fi
-
-          if [ -n "$OTHERS" ]; then
-            CHANGELOG="${CHANGELOG}
-
-          ### 📝 Outras Mudanças
-
-          ${OTHERS}"
-          fi
-
-          CHANGELOG="${CHANGELOG}
-
-          ### 📦 Artefatos
-
-          - Terraform modules
-          - Kubernetes manifests
-          - GitHub Actions workflows
-
-          ### 🔗 Links
-
-          - [Comparar mudanças](https://github.com/${{ github.repository }}/compare/${PREVIOUS_VERSION}...${VERSION})
-          - [Documentação](https://github.com/${{ github.repository }}/blob/${VERSION}/README.md)
-
-          ---
-          **Criado em:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-          **Por:** @${{ github.actor }}"
-
-          # Salvar changelog
-          echo "$CHANGELOG" > /tmp/changelog.md
-
-          # Exportar para output (escapando newlines)
           {
-            echo "changelog<<EOF"
-            echo "$CHANGELOG"
-            echo "EOF"
-          } >> $GITHUB_OUTPUT
-
-          echo "✅ Changelog gerado"
-
-      - name: Upload Changelog
-        uses: actions/upload-artifact@v4
-        with:
-          name: changelog-${{ needs.calculate-version.outputs.version }}
-          path: /tmp/changelog.md
-          retention-days: 90
-
-  # ============================================
-  # CRIAR GITHUB RELEASE
-  # ============================================
-  create-github-release:
-    name: Criar GitHub Release
-    needs:
-      [
-        calculate-version,
-        create-release-candidate,
-        finalize-release,
-        generate-changelog,
-      ]
-    runs-on: ubuntu-latest
-    if: |
-      always() &&
-      needs.calculate-version.outputs.has_changes == 'true' &&
-      needs.generate-changelog.result == 'success'
-
-    outputs:
-      release_id: ${{ steps.create-release.outputs.id }}
-      release_url: ${{ steps.create-release.outputs.html_url }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Criar Release
-        id: create-release
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const isDevelop = '${{ github.ref }}' === 'refs/heads/develop';
-            const version = '${{ needs.calculate-version.outputs.version }}';
-            const tagVersion = '${{ needs.calculate-version.outputs.tag_version }}';
-            const changelog = `${{ needs.generate-changelog.outputs.changelog }}`;
-            const branchName = isDevelop 
-              ? '${{ needs.create-release-candidate.outputs.branch_name }}'
-              : '${{ needs.prepare-release.outputs.branch_name }}';
-            const bumpType = '${{ needs.calculate-version.outputs.bump_type }}';
-
-            let body = changelog;
-            body += `\n\n### 🌿 Branch de Release\n\nBranch \`${branchName}\` criada para esta release.`;
-
-            if (isDevelop) {
-              body += `\n\n### ⚠️ Release Candidate\n\nEsta é uma release candidate (tag: \`${tagVersion}\`). Aguardando merge para main e deploy para finalizar.`;
-            } else {
-              body += `\n\n### 🚀 Deploy em Andamento\n\nA tag final será criada automaticamente após o deploy ser concluído com sucesso.`;
-            }
-
-            const releaseVersion = isDevelop ? tagVersion : tagVersion;
-            const isPrerelease = true; // Sempre prerelease até o deploy finalizar
-
-            const { data: release } = await github.rest.repos.createRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag_name: releaseVersion,
-              name: isDevelop ? `Release Candidate ${releaseVersion}` : `Release ${releaseVersion}`,
-              body: body,
-              draft: false,
-              prerelease: isPrerelease
-            });
-
-            console.log(`✅ Release criada: ${release.html_url}`);
-            core.setOutput('id', release.id);
-            core.setOutput('html_url', release.html_url);
-            core.notice(`Release criada: ${release.html_url}`);
-
-      - name: Resumo da Release
-        run: |
-          echo "## 🎉 GitHub Release Criada" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Item | Valor |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Versão | ${{ needs.calculate-version.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Release ID | ${{ steps.create-release.outputs.id }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| URL | ${{ steps.create-release.outputs.html_url }} |" >> $GITHUB_STEP_SUMMARY
-
-  # ============================================
-  # CRIAR ISSUE DE RELEASE
-  # ============================================
-  create-release-issue:
-    name: Criar Issue de Release
-    needs: [calculate-version, create-github-release]
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Criar Issue
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const version = '${{ needs.calculate-version.outputs.version }}';
-            const releaseUrl = '${{ needs.create-github-release.outputs.release_url }}';
-            const branchName = 'release/' + version;
-            const bumpType = '${{ needs.calculate-version.outputs.bump_type }}';
-
-            const { data: issue } = await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `🚀 Release ${version}`,
-              body: `## 🚀 Release ${version}
-
-            Esta issue documenta a release ${version} (${bumpType}).
-
-            ### 📋 Informações
-
-            | Item | Valor |
-            |------|-------|
-            | Versão | ${version} |
-            | Tipo | ${bumpType} |
-            | Branch | \`${branchName}\` |
-            | Release | [Ver Release](${releaseUrl}) |
-            | Criado por | @${{ github.actor }} |
-            | Data | ${new Date().toISOString()} |
-
-            ### ✅ Checklist de Deploy
-
-            - [ ] Validar mudanças na branch de release
-            - [ ] Executar testes
-            - [ ] Revisar changelog
-            - [ ] Deploy em staging
-            - [ ] Validar staging
-            - [ ] Deploy em produção
-            - [ ] Validar produção
-            - [ ] Monitorar métricas
-
-            ### 🔗 Links Úteis
-
-            - [Release Notes](${releaseUrl})
-            - [Comparar Mudanças](https://github.com/${{ github.repository }}/compare/${version})
-            - [Documentação](https://github.com/${{ github.repository }}/blob/${version}/README.md)
-
-            ---
-            *Issue criada automaticamente pelo workflow de release*`,
-              labels: ['release', version, 'deployment']
-            });
-
-            console.log(`✅ Issue criada: #${issue.number}`);
-            core.notice(`Issue de release: #${issue.number}`);
-
-  # ============================================
-  # RESUMO FINAL
-  # ============================================
-  final-summary:
-    name: Resumo Final
-    needs:
-      [
-        calculate-version,
-        create-release-candidate,
-        finalize-release,
-        generate-changelog,
-        create-github-release,
-        create-release-issue,
-      ]
-    runs-on: ubuntu-latest
-    if: always()
-
-    steps:
-      - name: Gerar Resumo Final
-        run: |
-          if [ "${{ needs.calculate-version.outputs.has_changes }}" != "true" ]; then
-            echo "# ℹ️ Nenhuma Release Criada" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "Nenhuma mudança detectada desde a última release." >> $GITHUB_STEP_SUMMARY
-            exit 0
-          fi
-
-          IS_DEVELOP="${{ github.ref == 'refs/heads/develop' }}"
-
-          if [ "$IS_DEVELOP" == "true" ]; then
-            echo "# 🚀 Release Candidate Criado" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "Release candidate criado na branch develop." >> $GITHUB_STEP_SUMMARY
-          else
-            echo "# ✅ Release Finalizada" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "Release finalizada na branch main." >> $GITHUB_STEP_SUMMARY
-          fi
-
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Status dos jobs
-          echo "## 📊 Status dos Jobs" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Cálculo de Versão | ${{ needs.calculate-version.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Release Candidate | ${{ needs.create-release-candidate.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Preparar Release | ${{ needs.prepare-release.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Changelog | ${{ needs.generate-changelog.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| GitHub Release | ${{ needs.create-github-release.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Issue | ${{ needs.create-release-issue.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Informações da release
-          echo "## 📋 Informações da Release" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Item | Valor |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Versão Anterior | ${{ needs.calculate-version.outputs.previous_version }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Nova Versão | ${{ needs.calculate-version.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Tipo de Bump | ${{ needs.calculate-version.outputs.bump_type }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Branch | ${{ github.ref_name }} |" >> $GITHUB_STEP_SUMMARY
-
-          if [ "${{ needs.create-github-release.outputs.release_url }}" != "" ]; then
-            echo "| Release URL | ${{ needs.create-github-release.outputs.release_url }} |" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          echo "| Criado por | @${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Próximos passos
-          if [ "$IS_DEVELOP" == "true" ]; then
-            echo "## 📝 Próximos Passos" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "1. Revisar changelog e release candidate" >> $GITHUB_STEP_SUMMARY
-            echo "2. Executar testes na branch de release" >> $GITHUB_STEP_SUMMARY
-            echo "3. Validar mudanças" >> $GITHUB_STEP_SUMMARY
-            echo "4. **Fazer merge para main para finalizar a release**" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "## 📝 Próximos Passos" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "1. Executar deploy em staging" >> $GITHUB_STEP_SUMMARY
-            echo "2. Validar em staging" >> $GITHUB_STEP_SUMMARY
-            echo "3. Executar deploy em produção" >> $GITHUB_STEP_SUMMARY
-            echo "4. Monitorar métricas e logs" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
-
-          if [ "${{ needs.create-github-release.outputs.release_url }}" != "" ]; then
-            echo "**🔗 Links:**" >> $GITHUB_STEP_SUMMARY
-            echo "- [Release](${{ needs.create-github-release.outputs.release_url }})" >> $GITHUB_STEP_SUMMARY
-          fi
+            echo "## Release Workflow"
+            echo ""
+            if [ "${{ steps.check_pr.outputs.has_open_pr }}" == "true" ]; then
+              echo "**Action:** Updated existing release PR"
+              echo ""
+              echo "| | |"
+              echo "|---|---|"
+              echo "| PR | [#${{ steps.check_pr.outputs.pr_number }}](https://github.com/${{ github.repository }}/pull/${{ steps.check_pr.outputs.pr_number }}) |"
+              echo "| Branch | \`${{ steps.check_pr.outputs.pr_branch }}\` |"
+              echo "| Trigger | \`${{ github.event_name }}\` |"
+            elif [ -n "${{ steps.create.outputs.version }}" ]; then
+              echo "**Action:** Created new release PR"
+              echo ""
+              echo "| | |"
+              echo "|---|---|"
+              echo "| Version | \`${{ steps.create.outputs.version }}\` |"
+              echo "| Branch | \`${{ steps.create.outputs.branch_name }}\` |"
+              echo "| PR | ${{ steps.create.outputs.pr_url }} |"
+              echo "| Trigger | \`${{ github.event_name }}\` |"
+            else
+              echo "**Action:** Failed before a version could be calculated"
+            fi
+          } >> $GITHUB_STEP_SUMMARY

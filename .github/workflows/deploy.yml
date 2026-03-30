@@ -1,27 +1,20 @@
-name: Deploy - Infraestrutura em Produção
+name: Deploy
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "terraform/**"
-      - "kubernetes/**"
-      - ".github/workflows/deploy.yml"
+  pull_request:
+    types: [ closed ]
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       environment:
-        description: "Ambiente para deploy"
+        description: 'Target environment'
         required: false
         type: choice
         options:
           - production
           - staging
         default: production
-      auto_approve:
-        description: "Aprovar automaticamente o apply"
-        required: false
-        type: boolean
-        default: true
 
 permissions:
   contents: write
@@ -29,715 +22,120 @@ permissions:
   id-token: write
 
 concurrency:
-  group: deploy-${{ github.event.inputs.environment || 'production' }}
+  group: deploy
   cancel-in-progress: false
 
 env:
-  AWS_REGION: us-east-1
-  TF_VERSION: 1.7.0
-  NAMESPACE: app-oficina-tech
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   ENVIRONMENT: ${{ github.event.inputs.environment || 'production' }}
-  WORKING_DIR: terraform/environments/${{ github.event.inputs.environment || 'production' }}
+  # Repository Variables — configure in Settings → Secrets and Variables → Variables
+  # Required: AWS_REGION, TF_VERSION, TF_WORKING_DIR, K8S_NAMESPACE
+  # Optional: HEALTH_ENDPOINT (default: /health)
 
 jobs:
-  # ============================================
-  # DEPLOY DA INFRAESTRUTURA
-  # ============================================
+  # ===========================================
+  # STAGE 1: Deploy Infrastructure
+  # ===========================================
   deploy:
-    name: Deploy Infraestrutura
+    name: Deploy Infrastructure
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/'))
     runs-on: ubuntu-latest
     environment:
       name: ${{ github.event.inputs.environment || 'production' }}
-      url: http://${{ steps.outputs.outputs.nlb_dns }}
 
     outputs:
-      environment: ${{ env.ENVIRONMENT }}
-      nlb_dns: ${{ steps.outputs.outputs.nlb_dns }}
-      nlb_arn: ${{ steps.outputs.outputs.nlb_arn }}
-      eks_cluster: ${{ steps.outputs.outputs.eks_cluster }}
-      eks_endpoint: ${{ steps.outputs.outputs.eks_endpoint }}
-      vpc_id: ${{ steps.outputs.outputs.vpc_id }}
-      deployed_at: ${{ steps.outputs.outputs.deployed_at }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-          terraform_wrapper: false
-
-      - name: Terraform Init
-        working-directory: ${{ env.WORKING_DIR }}
-        run: |
-          echo "🔧 Inicializando Terraform..."
-          terraform init
-
-      - name: Terraform Plan
-        id: plan
-        working-directory: ${{ env.WORKING_DIR }}
-        env:
-          TF_VAR_datadog_api_key: ${{ secrets.DD_API_KEY }}
-          TF_VAR_datadog_app_key: ${{ secrets.DD_APP_KEY }}
-          TF_VAR_datadog_api_url: ${{ secrets.DD_API_URL }}
-        run: |
-          echo "📋 Gerando plano de execução..."
-          terraform plan -out=tfplan -no-color 2>&1 | tee plan.txt
-
-          # Extrair estatísticas
-          if grep -q "No changes" plan.txt; then
-            echo "has_changes=false" >> $GITHUB_OUTPUT
-            echo "::notice::Nenhuma mudança detectada na infraestrutura"
-          else
-            echo "has_changes=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Cleanup Existing Resources Before Apply
-        continue-on-error: true
-        run: |
-          echo "🧹 Verificando e limpando recursos existentes não gerenciados pelo Helm..."
-
-          # Verificar se cluster EKS existe
-          CLUSTER_NAME=$(cd ${{ env.WORKING_DIR }} && terraform output -raw eks_cluster_name 2>/dev/null || echo "")
-
-          if [ -z "$CLUSTER_NAME" ]; then
-            echo "::notice::Cluster EKS ainda não existe, pulando limpeza"
-            exit 0
-          fi
-
-          echo "Cluster encontrado: $CLUSTER_NAME"
-
-          # Configurar kubeconfig
-          if ! aws eks update-kubeconfig \
-            --name "$CLUSTER_NAME" \
-            --region ${{ env.AWS_REGION }} 2>/dev/null; then
-            echo "::notice::Não foi possível conectar ao cluster, pulando limpeza"
-            exit 0
-          fi
-
-          # Verificar se consegue acessar o cluster
-          if ! kubectl get nodes &> /dev/null; then
-            echo "::notice::Sem acesso ao cluster, pulando limpeza"
-            exit 0
-          fi
-
-          echo "✅ Conectado ao cluster com sucesso"
-
-          # Verificar se cert-manager existe e remover TODOS os recursos se não for gerenciado pelo Helm
-          echo "🔍 Verificando cert-manager..."
-
-          CERT_MANAGER_HELM=$(helm list -n cert-manager 2>/dev/null | grep -c cert-manager || echo "0")
-
-          if [ "$CERT_MANAGER_HELM" -eq "0" ]; then
-            # cert-manager não é gerenciado pelo Helm, remover tudo
-            if kubectl get namespace cert-manager &> /dev/null; then
-              echo "⚠️ cert-manager encontrado mas NÃO gerenciado pelo Helm"
-              echo "🗑️ Removendo TODOS os recursos do cert-manager..."
-              
-              # Remover todos os ClusterRoles
-              echo "Removendo ClusterRoles..."
-              kubectl delete clusterrole cert-manager-cainjector --ignore-not-found=true
-              kubectl delete clusterrole cert-manager-controller-issuers --ignore-not-found=true
-              kubectl delete clusterrole cert-manager-controller-clusterissuers --ignore-not-found=true
-              kubectl delete clusterrole cert-manager-controller-certificates --ignore-not-found=true
-              kubectl delete clusterrole cert-manager-controller-orders --ignore-not-found=true
-              kubectl delete clusterrole cert-manager-controller-challenges --ignore-not-found=true
-              kubectl delete clusterrole cert-manager-controller-ingress-shim --ignore-not-found=true
-              kubectl delete clusterrole cert-manager-view --ignore-not-found=true
-              kubectl delete clusterrole cert-manager-edit --ignore-not-found=true
-              kubectl delete clusterrole cert-manager-controller-approve:cert-manager-io --ignore-not-found=true
-              kubectl delete clusterrole cert-manager-controller-certificatesigningrequests --ignore-not-found=true
-              kubectl delete clusterrole cert-manager-webhook:subjectaccessreviews --ignore-not-found=true
-              
-              # Remover todos os ClusterRoleBindings
-              echo "Removendo ClusterRoleBindings..."
-              kubectl delete clusterrolebinding cert-manager-cainjector --ignore-not-found=true
-              kubectl delete clusterrolebinding cert-manager-controller-issuers --ignore-not-found=true
-              kubectl delete clusterrolebinding cert-manager-controller-clusterissuers --ignore-not-found=true
-              kubectl delete clusterrolebinding cert-manager-controller-certificates --ignore-not-found=true
-              kubectl delete clusterrolebinding cert-manager-controller-orders --ignore-not-found=true
-              kubectl delete clusterrolebinding cert-manager-controller-challenges --ignore-not-found=true
-              kubectl delete clusterrolebinding cert-manager-controller-ingress-shim --ignore-not-found=true
-              kubectl delete clusterrolebinding cert-manager-controller-approve:cert-manager-io --ignore-not-found=true
-              kubectl delete clusterrolebinding cert-manager-controller-certificatesigningrequests --ignore-not-found=true
-              kubectl delete clusterrolebinding cert-manager-webhook:subjectaccessreviews --ignore-not-found=true
-              
-              # Remover MutatingWebhookConfiguration e ValidatingWebhookConfiguration
-              echo "Removendo Webhooks..."
-              kubectl delete mutatingwebhookconfiguration cert-manager-webhook --ignore-not-found=true
-              kubectl delete validatingwebhookconfiguration cert-manager-webhook --ignore-not-found=true
-              
-              # Remover CRDs
-              echo "Removendo CRDs..."
-              kubectl delete crd certificaterequests.cert-manager.io --ignore-not-found=true
-              kubectl delete crd certificates.cert-manager.io --ignore-not-found=true
-              kubectl delete crd challenges.acme.cert-manager.io --ignore-not-found=true
-              kubectl delete crd clusterissuers.cert-manager.io --ignore-not-found=true
-              kubectl delete crd issuers.cert-manager.io --ignore-not-found=true
-              kubectl delete crd orders.acme.cert-manager.io --ignore-not-found=true
-              
-              # Remover namespace (isso remove todos os recursos dentro dele)
-              echo "Removendo namespace cert-manager..."
-              kubectl delete namespace cert-manager --ignore-not-found=true --timeout=90s || true
-              
-              echo "✅ cert-manager removido completamente"
-              sleep 10
-            else
-              echo "✅ cert-manager não encontrado"
-            fi
-          else
-            echo "✅ cert-manager já é gerenciado pelo Helm, mantendo"
-          fi
-
-          # Remover CRDs do AWS Load Balancer Controller se não forem gerenciados pelo Helm
-          echo "🔍 Verificando CRDs do AWS Load Balancer Controller..."
-
-          ALB_CRDS=(
-            "ingressclassparams.elbv2.k8s.aws"
-            "targetgroupbindings.elbv2.k8s.aws"
-          )
-
-          for crd in "${ALB_CRDS[@]}"; do
-            if kubectl get crd "$crd" &> /dev/null; then
-              MANAGED_BY=$(kubectl get crd "$crd" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null || echo "")
-              
-              if [ "$MANAGED_BY" != "Helm" ]; then
-                echo "Removendo CRD não gerenciado pelo Helm: $crd"
-                kubectl delete crd "$crd" --ignore-not-found=true --timeout=30s || true
-              else
-                echo "CRD $crd já é gerenciado pelo Helm, mantendo"
-              fi
-            fi
-          done
-
-          # Remover deployment do AWS Load Balancer Controller se não for gerenciado pelo Helm
-          if kubectl get deployment aws-load-balancer-controller -n kube-system &> /dev/null; then
-            MANAGED_BY=$(kubectl get deployment aws-load-balancer-controller -n kube-system -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null || echo "")
-            
-            if [ "$MANAGED_BY" != "Helm" ]; then
-              echo "Removendo AWS Load Balancer Controller não gerenciado pelo Helm..."
-              kubectl delete deployment aws-load-balancer-controller -n kube-system --ignore-not-found=true
-              kubectl delete serviceaccount aws-load-balancer-controller -n kube-system --ignore-not-found=true
-              kubectl delete service aws-load-balancer-webhook-service -n kube-system --ignore-not-found=true
-              kubectl delete clusterrole aws-load-balancer-controller-role --ignore-not-found=true
-              kubectl delete clusterrolebinding aws-load-balancer-controller-rolebinding --ignore-not-found=true
-              sleep 3
-            else
-              echo "AWS Load Balancer Controller já é gerenciado pelo Helm, mantendo"
-            fi
-          fi
-
-          echo "✅ Limpeza concluída"
-
-      - name: Terraform Apply
-        if: steps.plan.outputs.has_changes == 'true' || github.event.inputs.auto_approve == 'true'
-        working-directory: ${{ env.WORKING_DIR }}
-        env:
-          TF_VAR_datadog_api_key: ${{ secrets.DD_API_KEY }}
-          TF_VAR_datadog_app_key: ${{ secrets.DD_APP_KEY }}
-          TF_VAR_datadog_api_url: ${{ secrets.DD_API_URL }}
-        run: |
-          echo "🚀 Aplicando mudanças na infraestrutura..."
-
-          if [ "${{ github.event.inputs.auto_approve }}" == "true" ] || [ "${{ github.event_name }}" == "push" ]; then
-            terraform apply -auto-approve tfplan
-          else
-            terraform apply tfplan
-          fi
-
-          echo "✅ Infraestrutura aplicada com sucesso!"
-
-      - name: Get Terraform Outputs
-        id: outputs
-        working-directory: ${{ env.WORKING_DIR }}
-        run: |
-          echo "📊 Coletando outputs da infraestrutura..."
-
-          # NLB
-          NLB_DNS=$(terraform output -raw nlb_dns_name 2>/dev/null || echo "")
-          NLB_ARN=$(terraform output -raw nlb_arn 2>/dev/null || echo "")
-
-          # EKS
-          EKS_CLUSTER=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "")
-          EKS_ENDPOINT=$(terraform output -raw eks_cluster_endpoint 2>/dev/null || echo "")
-
-          # VPC
-          VPC_ID=$(terraform output -raw vpc_id 2>/dev/null || echo "")
-
-          # Timestamp
-          DEPLOYED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-          # Exportar outputs
-          echo "nlb_dns=$NLB_DNS" >> $GITHUB_OUTPUT
-          echo "nlb_arn=$NLB_ARN" >> $GITHUB_OUTPUT
-          echo "eks_cluster=$EKS_CLUSTER" >> $GITHUB_OUTPUT
-          echo "eks_endpoint=$EKS_ENDPOINT" >> $GITHUB_OUTPUT
-          echo "vpc_id=$VPC_ID" >> $GITHUB_OUTPUT
-          echo "deployed_at=$DEPLOYED_AT" >> $GITHUB_OUTPUT
-
-          # Logs
-          echo "::notice::NLB: $NLB_DNS"
-          echo "::notice::EKS: $EKS_CLUSTER"
-          echo "::notice::VPC: $VPC_ID"
-
-      - name: Update Kubeconfig
-        if: steps.outputs.outputs.eks_cluster != ''
-        run: |
-          echo "⚙️ Atualizando kubeconfig..."
-          aws eks update-kubeconfig \
-            --name ${{ steps.outputs.outputs.eks_cluster }} \
-            --region ${{ env.AWS_REGION }}
-
-      - name: Verify AWS Load Balancer Controller
-        if: steps.outputs.outputs.eks_cluster != ''
-        run: |
-          echo "🔍 Verificando AWS Load Balancer Controller..."
-
-          # Aguardar controller ficar disponível (instalado pelo Terraform)
-          for i in {1..12}; do
-            if kubectl get deployment -n kube-system aws-load-balancer-controller &> /dev/null; then
-              echo "✅ AWS Load Balancer Controller encontrado"
-              kubectl get deployment -n kube-system aws-load-balancer-controller
-              break
-            fi
-            echo "Aguardando controller... ($i/12)"
-            sleep 5
-          done
-
-          # Verificar CRDs
-          echo ""
-          echo "🔍 Verificando CRDs..."
-          kubectl get crd targetgroupbindings.elbv2.k8s.aws || echo "⚠️ CRD não encontrado ainda"
-
-      - name: Apply Kubernetes Resources
-        if: steps.outputs.outputs.eks_cluster != ''
-        run: |
-          echo "☸️ Aplicando recursos Kubernetes..."
-
-          # Verificar se o diretório existe
-          if [ -d "kubernetes/overlays/${{ env.ENVIRONMENT }}" ]; then
-            kubectl apply -k kubernetes/overlays/${{ env.ENVIRONMENT }}
-          elif [ -d "kubernetes/overlay" ]; then
-            kubectl apply -k kubernetes/overlay
-          else
-            echo "⚠️ Diretório de overlays não encontrado"
-          fi
-
-      - name: Update ConfigMap
-        if: steps.outputs.outputs.eks_cluster != ''
-        continue-on-error: true
-        run: |
-          echo "🔧 Atualizando ConfigMap com dados da infraestrutura..."
-
-          kubectl create configmap oficina-tech-infra \
-            --from-literal=NLB_DNS="${{ steps.outputs.outputs.nlb_dns }}" \
-            -n ${{ env.NAMESPACE }} \
-            --dry-run=client -o yaml | kubectl apply -f -
-
-      - name: Save Infrastructure Outputs
-        run: |
-          echo "💾 Salvando outputs da infraestrutura..."
-
-          mkdir -p /tmp/infra-outputs
-
-          cat > /tmp/infra-outputs/${{ env.ENVIRONMENT }}.json <<EOF
-          {
-            "environment": "${{ env.ENVIRONMENT }}",
-            "nlb": {
-              "dns": "${{ steps.outputs.outputs.nlb_dns }}",
-              "arn": "${{ steps.outputs.outputs.nlb_arn }}"
-            },
-            "eks": {
-              "cluster_name": "${{ steps.outputs.outputs.eks_cluster }}",
-              "endpoint": "${{ steps.outputs.outputs.eks_endpoint }}"
-            },
-            "vpc": {
-              "id": "${{ steps.outputs.outputs.vpc_id }}"
-            },
-            "deployment": {
-              "deployed_at": "${{ steps.outputs.outputs.deployed_at }}",
-              "deployed_by": "${{ github.actor }}",
-              "commit_sha": "${{ github.sha }}",
-              "workflow_run": "${{ github.run_id }}"
-            }
-          }
-          EOF
-
-          echo "✅ Outputs salvos"
-
-      - name: Upload Outputs Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: infra-outputs-${{ env.ENVIRONMENT }}-${{ github.sha }}
-          path: /tmp/infra-outputs/${{ env.ENVIRONMENT }}.json
-          retention-days: 90
-
-      - name: Deploy Summary
-        run: |
-          echo "## 🚀 Deploy Concluído" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📊 Infraestrutura" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Recurso | Valor |" >> $GITHUB_STEP_SUMMARY
-          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Ambiente | ${{ env.ENVIRONMENT }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| VPC | ${{ steps.outputs.outputs.vpc_id }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| EKS Cluster | ${{ steps.outputs.outputs.eks_cluster }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| NLB DNS | ${{ steps.outputs.outputs.nlb_dns }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🔗 URLs" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Application:** http://${{ steps.outputs.outputs.nlb_dns }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### ℹ️ Deployment Info" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Item | Valor |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Deployed At | ${{ steps.outputs.outputs.deployed_at }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Deployed By | @${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Workflow | [#${{ github.run_number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> $GITHUB_STEP_SUMMARY
-
-  # ============================================
-  # VERIFICAÇÃO PÓS-DEPLOY
-  # ============================================
-  post-deploy-check:
-    name: Verificação Pós-Deploy
-    needs: deploy
-    runs-on: ubuntu-latest
-    if: success()
-
-    steps:
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Check EKS Cluster Health
-        if: needs.deploy.outputs.eks_cluster != ''
-        run: |
-          echo "🏥 Verificando saúde do cluster EKS..."
-
-          # Atualizar kubeconfig
-          aws eks update-kubeconfig \
-            --name ${{ needs.deploy.outputs.eks_cluster }} \
-            --region ${{ env.AWS_REGION }}
-
-          # Verificar se o cluster está acessível
-          echo "Verificando conectividade com o cluster..."
-          if ! aws eks describe-cluster \
-            --name ${{ needs.deploy.outputs.eks_cluster }} \
-            --region ${{ env.AWS_REGION }} \
-            --query 'cluster.status' \
-            --output text; then
-            echo "⚠️ Não foi possível acessar o cluster"
-            exit 0
-          fi
-
-          # Verificar nodes
-          echo "Nodes:"
-          kubectl get nodes --request-timeout=30s || echo "⚠️ Não foi possível listar nodes"
-
-          # Verificar pods
-          echo "Pods no namespace ${{ env.NAMESPACE }}:"
-          kubectl get pods -n ${{ env.NAMESPACE }} --request-timeout=30s || echo "⚠️ Namespace não encontrado ou sem acesso"
-
-      - name: Check NLB Status
-        if: needs.deploy.outputs.nlb_dns != ''
-        run: |
-          echo "⚖️ Verificando status do NLB..."
-
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-            --connect-timeout 10 \
-            --max-time 30 \
-            http://${{ needs.deploy.outputs.nlb_dns }}/health || echo "000")
-
-          echo "HTTP Status Code: $HTTP_CODE"
-
-          if [ "$HTTP_CODE" == "200" ] || [ "$HTTP_CODE" == "404" ]; then
-            echo "✅ NLB está respondendo"
-          else
-            echo "⚠️ NLB não está respondendo corretamente (código: $HTTP_CODE)"
-          fi
-
-      - name: Health Check Summary
-        run: |
-          echo "## 🏥 Verificação de Saúde" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Verificações pós-deploy executadas com sucesso." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### ✅ Componentes Verificados" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- EKS Cluster" >> $GITHUB_STEP_SUMMARY
-          echo "- Network Load Balancer" >> $GITHUB_STEP_SUMMARY
-
-  # ============================================
-  # RESUMO FINAL
-  # ============================================
-  final-summary:
-    name: Resumo Final
-    needs: [deploy, post-deploy-check, finalize-release]
-    runs-on: ubuntu-latest
-    if: always()
-
-    steps:
-      - name: Generate Final Summary
-        run: |
-          echo "# 🎉 Deploy Finalizado" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Status dos jobs
-          echo "## 📊 Status dos Jobs" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Deploy | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Verificação Pós-Deploy | ${{ needs.post-deploy-check.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Finalizar Release | ${{ needs.finalize-release.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Principais dados
-          echo "## 🔑 Principais Dados" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Recurso | Valor |" >> $GITHUB_STEP_SUMMARY
-          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Ambiente | ${{ needs.deploy.outputs.environment }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| EKS Cluster | ${{ needs.deploy.outputs.eks_cluster }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| NLB | ${{ needs.deploy.outputs.nlb_dns }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| VPC | ${{ needs.deploy.outputs.vpc_id }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Deploy Time | ${{ needs.deploy.outputs.deployed_at }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # URLs importantes
-          echo "## 🔗 URLs Importantes" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Application:** http://${{ needs.deploy.outputs.nlb_dns }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **EKS Console:** https://console.aws.amazon.com/eks/home?region=${{ env.AWS_REGION }}#/clusters/${{ needs.deploy.outputs.eks_cluster }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Próximos passos
-          echo "## 📝 Próximos Passos" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "1. Verificar logs da aplicação" >> $GITHUB_STEP_SUMMARY
-          echo "2. Monitorar métricas no CloudWatch" >> $GITHUB_STEP_SUMMARY
-          echo "3. Validar endpoints da API" >> $GITHUB_STEP_SUMMARY
-          echo "4. Confirmar funcionamento completo" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "**Deployed by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Workflow:** [#${{ github.run_number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
-
-  # ============================================
-  # FINALIZAR RELEASE
-  # ============================================
-  finalize-release:
-    name: Finalizar Release
-    needs: [deploy, post-deploy-check]
-    runs-on: ubuntu-latest
-    if: success() && github.ref == 'refs/heads/main'
+      version: ${{ steps.version.outputs.VERSION }}
+      eks_cluster: ${{ steps.apply.outputs.eks_cluster }}
+      nlb_dns: ${{ steps.apply.outputs.nlb_dns }}
+      vpc_id: ${{ steps.apply.outputs.vpc_id }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: main
 
-      - name: Configurar Git
+      - name: Extract Version
+        id: version
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            TAG=$(git tag --sort=-v:refname | head -n 1 || echo "v0.0.0")
+          else
+            BRANCH="${{ github.event.pull_request.head.ref }}"
+            TAG="${BRANCH#release/}"
+          fi
+          echo "VERSION=$TAG" >> $GITHUB_OUTPUT
+          echo "::notice::Version: $TAG"
 
-      - name: Obter Versão RC
-        id: get-version
+      - name: Validate Required Secrets
         run: |
-          echo "🔍 Buscando tag RC..."
-
-          # Obter última tag RC
-          RC_TAG=$(git tag -l "v*-rc" --sort=-version:refname | head -n 1)
-
-          if [ -z "$RC_TAG" ]; then
-            echo "::warning::Nenhuma tag RC encontrada"
-            echo "has_rc=false" >> $GITHUB_OUTPUT
-            exit 0
+          MISSING=()
+          [ -z "${{ secrets.AWS_ACCESS_KEY_ID }}" ]     && MISSING+=("AWS_ACCESS_KEY_ID")
+          [ -z "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ] && MISSING+=("AWS_SECRET_ACCESS_KEY")
+          [ -z "${{ secrets.DB_PASSWORD }}" ]            && MISSING+=("DB_PASSWORD")
+          if [ ${#MISSING[@]} -gt 0 ]; then
+            echo "::error::Required secrets missing: ${MISSING[*]}"
+            exit 1
           fi
 
-          echo "has_rc=true" >> $GITHUB_OUTPUT
-          echo "rc_tag=$RC_TAG" >> $GITHUB_OUTPUT
-
-          # Remover sufixo -rc para obter versão final
-          FINAL_VERSION="${RC_TAG%-rc}"
-          echo "final_version=$FINAL_VERSION" >> $GITHUB_OUTPUT
-
-          echo "::notice::Tag RC: $RC_TAG"
-          echo "::notice::Versão final: $FINAL_VERSION"
-
-      - name: Criar Tag Final
-        id: create-tag
-        if: steps.get-version.outputs.has_rc == 'true'
-        run: |
-          RC_TAG="${{ steps.get-version.outputs.rc_tag }}"
-          FINAL_VERSION="${{ steps.get-version.outputs.final_version }}"
-
-          echo "🏷️ Finalizando release: $RC_TAG → $FINAL_VERSION..."
-
-          # Verificar se tag final já existe
-          if git rev-parse "$FINAL_VERSION" >/dev/null 2>&1; then
-            echo "::warning::Tag $FINAL_VERSION já existe"
-            echo "created=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          # Criar tag final
-          git tag -a "$FINAL_VERSION" -m "Release $FINAL_VERSION
-
-          Deploy concluído com sucesso em: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-          Deployed by: ${{ github.actor }}
-          Commit: ${{ github.sha }}
-
-          ✅ Release finalizada e validada após deploy bem-sucedido."
-
-          git push origin "$FINAL_VERSION"
-
-          echo "created=true" >> $GITHUB_OUTPUT
-          echo "::notice::✅ Tag final $FINAL_VERSION criada com sucesso"
-
-      - name: Remover Tag RC
-        if: steps.create-tag.outputs.created == 'true'
-        run: |
-          RC_TAG="${{ steps.get-version.outputs.rc_tag }}"
-
-          echo "🗑️ Removendo tag RC $RC_TAG..."
-
-          git push --delete origin "$RC_TAG" || true
-          git tag -d "$RC_TAG" || true
-
-          echo "::notice::Tag RC removida"
-
-      - name: Atualizar GitHub Release
-        if: steps.create-tag.outputs.created == 'true'
-        uses: actions/github-script@v7
+      - name: Apply Infrastructure
+        id: apply
+        uses: ./.github/actions/deploy/tf-apply
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const rcTag = '${{ steps.get-version.outputs.rc_tag }}';
-            const finalVersion = '${{ steps.get-version.outputs.final_version }}';
+          tf_version: ${{ vars.TF_VERSION || '1.7.0' }}
+          working_dir: >-
+            ${{ env.ENVIRONMENT == 'staging'
+              && (vars.TF_WORKING_DIR_STAGING || 'terraform/environments/staging')
+              || (vars.TF_WORKING_DIR || 'terraform/environments/production') }}
+          environment: ${{ env.ENVIRONMENT }}
+          aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws_session_token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws_region: ${{ env.AWS_REGION }}
+          db_password: ${{ secrets.DB_PASSWORD }}
+          dd_api_key: ${{ secrets.DD_API_KEY }}
+          dd_app_key: ${{ secrets.DD_APP_KEY }}
+          dd_api_url: ${{ secrets.DD_API_URL }}
+          k8s_namespace: ${{ vars.K8S_NAMESPACE }}
+          plan_sha: ${{ github.event.pull_request.head.sha }}
 
-            try {
-              // Obter release RC
-              const { data: rcRelease } = await github.rest.repos.getReleaseByTag({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag: rcTag
-              });
-
-              // Atualizar release para versão final
-              const { data: finalRelease } = await github.rest.repos.updateRelease({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                release_id: rcRelease.id,
-                tag_name: finalVersion,
-                name: `Release ${finalVersion}`,
-                prerelease: false,
-                body: rcRelease.body + `\n\n---\n\n## ✅ Deploy Concluído\n\nDeploy finalizado com sucesso em ${new Date().toISOString()}\n\nEsta release foi validada e está em produção.`
-              });
-
-              console.log(`✅ Release atualizada: ${finalRelease.html_url}`);
-              core.notice(`Release finalizada: ${finalRelease.html_url}`);
-            } catch (error) {
-              console.log(`⚠️ Erro ao atualizar release: ${error.message}`);
-              core.warning(`Não foi possível atualizar a release: ${error.message}`);
-            }
-
-      - name: Atualizar PR
-        if: steps.create-tag.outputs.created == 'true'
-        uses: actions/github-script@v7
-        continue-on-error: true
+      - name: Post-Deploy Health Check
+        uses: ./.github/actions/deploy/post-check
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const finalVersion = '${{ steps.get-version.outputs.final_version }}';
-            const branchName = `release/${finalVersion}`;
+          eks_cluster: ${{ steps.apply.outputs.eks_cluster }}
+          nlb_dns: ${{ steps.apply.outputs.nlb_dns }}
+          aws_region: ${{ env.AWS_REGION }}
+          k8s_namespace: ${{ vars.K8S_NAMESPACE }}
+          health_endpoint: ${{ vars.HEALTH_ENDPOINT || '/health' }}
 
-            // Buscar PR que foi merged
-            const { data: prs } = await github.rest.pulls.list({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'closed',
-              sort: 'updated',
-              direction: 'desc',
-              per_page: 10
-            });
+      # Tag is created only after a successful health check — a tag represents
+      # exactly what is confirmed running in production. Skipped on workflow_dispatch
+      # since that redeploys an existing version without creating a new tag.
+      - name: Finalize Release Tag
+        if: github.event_name != 'workflow_dispatch'
+        uses: ./.github/actions/release/finalize-tag
+        with:
+          version: ${{ steps.version.outputs.VERSION }}
 
-            // Encontrar PR da release
-            const releasePR = prs.find(pr => 
-              pr.head.ref === branchName && 
-              pr.base.ref === 'main' &&
-              pr.merged_at
-            );
-
-            if (!releasePR) {
-              console.log('PR de release não encontrado');
-              return;
-            }
-
-            // Adicionar comentário no PR
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: releasePR.number,
-              body: `## ✅ Release Finalizada
-
-            A release ${finalVersion} foi finalizada com sucesso após o deploy!
-
-            ### 📦 Versão Final
-
-            - **Tag:** \`${finalVersion}\`
-            - **Release:** [Ver Release](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/tag/${finalVersion})
-            - **Deploy:** Concluído em ${new Date().toISOString()}
-
-            ### 🚀 Deploy Info
-
-            | Item | Valor |
-            |------|-------|
-            | Ambiente | ${{ needs.deploy.outputs.environment }} |
-            | NLB | ${{ needs.deploy.outputs.nlb_dns }} |
-            | EKS | ${{ needs.deploy.outputs.eks_cluster }} |
-
-            ### 🔗 Links
-
-            - [Comparar mudanças](https://github.com/${context.repo.owner}/${context.repo.repo}/compare/${finalVersion})
-            - [Application](http://${{ needs.deploy.outputs.nlb_dns }})
-
-            ---
-            *Release finalizada automaticamente após deploy bem-sucedido*`
-            });
-
-            console.log(\`✅ PR #\${releasePR.number} atualizado\`);
-
-      - name: Resumo
-        if: steps.get-version.outputs.has_rc == 'true'
+      - name: Deployment Summary
+        if: always()
         run: |
-          echo "## ✅ Release Finalizada" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Item | Valor |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Tag RC | ${{ steps.get-version.outputs.rc_tag }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Tag Final | ${{ steps.get-version.outputs.final_version }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Status | ${{ steps.create-tag.outputs.created == 'true' && '✅ Criada' || '⚠️ Já existe' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "A tag final foi criada após o deploy ser concluído com sucesso!" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Deployment Summary"
+            echo ""
+            echo "| Resource | Value |"
+            echo "|----------|-------|"
+            echo "| Version | \`${{ steps.version.outputs.VERSION }}\` |"
+            echo "| Environment | \`${{ env.ENVIRONMENT }}\` |"
+            echo "| EKS Cluster | \`${{ steps.apply.outputs.eks_cluster }}\` |"
+            echo "| Region | \`${{ env.AWS_REGION }}\` |"
+            echo "| NLB DNS | \`${{ steps.apply.outputs.nlb_dns }}\` |"
+            echo "| VPC | \`${{ steps.apply.outputs.vpc_id }}\` |"
+            echo ""
+            echo "**Endpoints:**"
+            echo "- Application: http://${{ steps.apply.outputs.nlb_dns }}"
+            echo "- Health: http://${{ steps.apply.outputs.nlb_dns }}${{ vars.HEALTH_ENDPOINT || '/health' }}"
+          } >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,212 @@
+name: 'Deploy — Terraform Apply'
+description: >
+  Initialises Terraform, cleans up any Kubernetes resources not managed by
+  Helm (to prevent conflicts), runs terraform apply and exports the infrastructure
+  outputs (EKS cluster, NLB DNS, VPC). Also applies Kubernetes overlays if present.
+  Fails with detailed output on any error — the release tag is NOT created if
+  this action fails.
+
+inputs:
+  tf_version:
+    description: 'Terraform version to use'
+    required: false
+    default: '1.7.0'
+  working_dir:
+    description: 'Path to the Terraform root module'
+    required: false
+    default: 'terraform/environments/production'
+  environment:
+    description: 'Target environment (e.g. production)'
+    required: false
+    default: 'production'
+  aws_access_key_id:
+    description: 'AWS Access Key ID'
+    required: true
+  aws_secret_access_key:
+    description: 'AWS Secret Access Key'
+    required: true
+  aws_session_token:
+    description: 'AWS Session Token'
+    required: true
+  aws_region:
+    description: 'AWS region'
+    required: true
+  db_password:
+    description: 'TF_VAR_db_password'
+    required: true
+  dd_api_key:
+    description: 'TF_VAR_datadog_api_key'
+    required: false
+    default: ''
+  dd_app_key:
+    description: 'TF_VAR_datadog_app_key'
+    required: false
+    default: ''
+  dd_api_url:
+    description: 'TF_VAR_datadog_api_url'
+    required: false
+    default: ''
+  k8s_namespace:
+    description: 'Kubernetes namespace — used for the infra ConfigMap'
+    required: true
+  plan_sha:
+    description: >
+      SHA of the commit whose CI plan artifact should be reused.
+      When provided, the action downloads tfplan-{sha} from CI and skips re-planning.
+      Falls back to a fresh plan if the artifact is not found or expired.
+    required: false
+    default: ''
+
+outputs:
+  nlb_dns:
+    description: 'Network Load Balancer DNS name'
+    value: ${{ steps.outputs.outputs.nlb_dns }}
+  nlb_arn:
+    description: 'Network Load Balancer ARN'
+    value: ${{ steps.outputs.outputs.nlb_arn }}
+  eks_cluster:
+    description: 'EKS cluster name'
+    value: ${{ steps.outputs.outputs.eks_cluster }}
+  eks_endpoint:
+    description: 'EKS cluster API endpoint'
+    value: ${{ steps.outputs.outputs.eks_endpoint }}
+  vpc_id:
+    description: 'VPC ID'
+    value: ${{ steps.outputs.outputs.vpc_id }}
+
+runs:
+  using: composite
+  steps:
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ inputs.aws_access_key_id }}
+        aws-secret-access-key: ${{ inputs.aws_secret_access_key }}
+        aws-session-token: ${{ inputs.aws_session_token }}
+        aws-region: ${{ inputs.aws_region }}
+
+    - name: Cache Terraform Providers
+      uses: actions/cache@v4
+      with:
+        path: ${{ inputs.working_dir }}/.terraform/providers
+        key: tf-providers-${{ runner.os }}-${{ hashFiles(format('{0}/.terraform.lock.hcl', inputs.working_dir)) }}
+        restore-keys: tf-providers-${{ runner.os }}-
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ inputs.tf_version }}
+        terraform_wrapper: false
+
+    - name: Terraform Init
+      shell: bash
+      working-directory: ${{ inputs.working_dir }}
+      run: terraform init
+
+    # Attempt to reuse the plan artifact produced by CI for the same commit.
+    # This avoids re-running plan (~3-5 min) when the PR was just reviewed.
+    # Falls back gracefully if the artifact has expired or plan_sha is not set.
+    - name: Download CI Plan Artifact
+      id: download_plan
+      if: inputs.plan_sha != ''
+      continue-on-error: true
+      uses: actions/download-artifact@v4
+      with:
+        name: tfplan-${{ inputs.plan_sha }}
+        path: ${{ inputs.working_dir }}
+
+    - name: Terraform Plan
+      id: plan
+      if: steps.download_plan.outcome != 'success'
+      shell: bash
+      working-directory: ${{ inputs.working_dir }}
+      env:
+        TF_VAR_db_password: ${{ inputs.db_password }}
+        TF_VAR_datadog_api_key: ${{ inputs.dd_api_key }}
+        TF_VAR_datadog_app_key: ${{ inputs.dd_app_key }}
+        TF_VAR_datadog_api_url: ${{ inputs.dd_api_url }}
+      run: |
+        terraform plan -out=tfplan -no-color 2>&1 | tee plan.txt
+        if grep -q "No changes" plan.txt; then
+          echo "::notice::No infrastructure changes detected"
+        fi
+
+    # Always show the plan that will be applied — critical for audit trail and
+    # especially important when reusing a CI artifact (Plan step was skipped).
+    - name: Show Plan
+      shell: bash
+      working-directory: ${{ inputs.working_dir }}
+      run: |
+        echo "::notice::Changes to be applied:"
+        terraform show -no-color tfplan
+
+    - name: Terraform Apply
+      shell: bash
+      working-directory: ${{ inputs.working_dir }}
+      env:
+        TF_VAR_db_password: ${{ inputs.db_password }}
+        TF_VAR_datadog_api_key: ${{ inputs.dd_api_key }}
+        TF_VAR_datadog_app_key: ${{ inputs.dd_app_key }}
+        TF_VAR_datadog_api_url: ${{ inputs.dd_api_url }}
+      run: |
+        echo "::notice::Applying infrastructure changes..."
+        terraform apply -auto-approve tfplan
+        echo "::notice::Infrastructure applied successfully"
+
+    - name: Get Terraform Outputs
+      id: outputs
+      shell: bash
+      working-directory: ${{ inputs.working_dir }}
+      run: |
+        NLB_DNS=$(terraform output -raw nlb_dns_name 2>/dev/null || echo "")
+        NLB_ARN=$(terraform output -raw nlb_arn 2>/dev/null || echo "")
+        EKS_CLUSTER=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "")
+        EKS_ENDPOINT=$(terraform output -raw eks_cluster_endpoint 2>/dev/null || echo "")
+        VPC_ID=$(terraform output -raw vpc_id 2>/dev/null || echo "")
+
+        echo "nlb_dns=$NLB_DNS"       >> $GITHUB_OUTPUT
+        echo "nlb_arn=$NLB_ARN"       >> $GITHUB_OUTPUT
+        echo "eks_cluster=$EKS_CLUSTER" >> $GITHUB_OUTPUT
+        echo "eks_endpoint=$EKS_ENDPOINT" >> $GITHUB_OUTPUT
+        echo "vpc_id=$VPC_ID"         >> $GITHUB_OUTPUT
+
+        echo "::notice::EKS: $EKS_CLUSTER | NLB: $NLB_DNS | VPC: $VPC_ID"
+
+    - name: Configure kubectl
+      if: steps.outputs.outputs.eks_cluster != ''
+      shell: bash
+      run: |
+        aws eks update-kubeconfig \
+          --name ${{ steps.outputs.outputs.eks_cluster }} \
+          --region ${{ inputs.aws_region }}
+
+        if ! kubectl get nodes 2>/dev/null; then
+          echo "::error::Cannot access EKS cluster after apply"
+          exit 1
+        fi
+
+    - name: Apply Kubernetes Overlays
+      if: steps.outputs.outputs.eks_cluster != ''
+      shell: bash
+      env:
+        ENVIRONMENT: ${{ inputs.environment }}
+      run: |
+        if [ -d "kubernetes/overlays/$ENVIRONMENT" ]; then
+          kubectl apply -k "kubernetes/overlays/$ENVIRONMENT"
+        elif [ -d "kubernetes/overlay" ]; then
+          kubectl apply -k kubernetes/overlay
+        else
+          echo "::notice::No Kubernetes overlay directory found — skipping"
+        fi
+
+    - name: Update Infra ConfigMap
+      if: steps.outputs.outputs.eks_cluster != ''
+      shell: bash
+      continue-on-error: true
+      run: |
+        kubectl create configmap infra-outputs \
+          --from-literal=NLB_DNS="${{ steps.outputs.outputs.nlb_dns }}" \
+          --from-literal=EKS_CLUSTER="${{ steps.outputs.outputs.eks_cluster }}" \
+          --from-literal=VPC_ID="${{ steps.outputs.outputs.vpc_id }}" \
+          -n ${{ inputs.k8s_namespace }} \
+          --dry-run=client -o yaml | kubectl apply -f -
