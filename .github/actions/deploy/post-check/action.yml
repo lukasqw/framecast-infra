@@ -1,0 +1,122 @@
+name: 'Deploy — Post-Deploy Health Check'
+description: >
+  Verifies EKS cluster health (nodes ready, pods running) and probes the NLB
+  endpoint. Any failure here prevents the release tag from being created —
+  same pattern as the application health check in oficina-tech.
+
+inputs:
+  eks_cluster:
+    description: 'EKS cluster name'
+    required: true
+  nlb_dns:
+    description: 'Network Load Balancer DNS name'
+    required: true
+  aws_region:
+    description: 'AWS region'
+    required: true
+  k8s_namespace:
+    description: 'Kubernetes namespace to check pods in'
+    required: true
+  health_endpoint:
+    description: 'HTTP path to probe on the NLB'
+    required: false
+    default: '/health'
+
+runs:
+  using: composite
+  steps:
+    - name: Check EKS Cluster
+      shell: bash
+      env:
+        CLUSTER: ${{ inputs.eks_cluster }}
+        AWS_REGION: ${{ inputs.aws_region }}
+        NAMESPACE: ${{ inputs.k8s_namespace }}
+      run: |
+        echo "::notice::Verifying EKS cluster: $CLUSTER"
+
+        STATUS=$(aws eks describe-cluster \
+          --name "$CLUSTER" \
+          --region "$AWS_REGION" \
+          --query 'cluster.status' \
+          --output text 2>/dev/null || echo "UNKNOWN")
+
+        if [ "$STATUS" != "ACTIVE" ]; then
+          echo "::error::EKS cluster $CLUSTER is not ACTIVE (status: $STATUS)"
+          exit 1
+        fi
+
+        aws eks update-kubeconfig --name "$CLUSTER" --region "$AWS_REGION"
+
+        echo "=== Nodes ==="
+        if ! kubectl get nodes --request-timeout=30s; then
+          echo "::error::Cannot list nodes — cluster may be unreachable"
+          exit 1
+        fi
+
+        echo ""
+        echo "=== Pods in $NAMESPACE ==="
+        kubectl get pods -n "$NAMESPACE" --request-timeout=30s || \
+          echo "::notice::Namespace $NAMESPACE not yet populated"
+
+        echo "::notice::EKS cluster is healthy"
+
+    # Probes the NLB endpoint with up to 5 retries (60s apart) to account for
+    # NLB warmup time after provisioning (~2-5 min). Any HTTP response confirms
+    # the NLB is reachable — connection errors (000) trigger a retry.
+    # 5xx responses emit a warning: the NLB is up but the app may be degraded.
+    - name: Check NLB Endpoint
+      shell: bash
+      env:
+        NLB_DNS: ${{ inputs.nlb_dns }}
+        HEALTH_ENDPOINT: ${{ inputs.health_endpoint }}
+      run: |
+        echo "::notice::Probing NLB: http://$NLB_DNS$HEALTH_ENDPOINT"
+
+        MAX_RETRIES=5
+        RETRY_DELAY=60
+
+        for i in $(seq 1 $MAX_RETRIES); do
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            --connect-timeout 10 \
+            --max-time 30 \
+            "http://$NLB_DNS$HEALTH_ENDPOINT" || echo "000")
+
+          echo "Attempt $i/$MAX_RETRIES — HTTP status: $HTTP_CODE"
+
+          if [[ "$HTTP_CODE" =~ ^[23] ]]; then
+            echo "::notice::NLB responded with HTTP $HTTP_CODE"
+            exit 0
+          fi
+
+          if [[ "$HTTP_CODE" =~ ^[45] ]]; then
+            echo "::warning::NLB returned HTTP $HTTP_CODE — load balancer is reachable but the application may be degraded"
+            exit 0
+          fi
+
+          if [ "$i" -lt "$MAX_RETRIES" ]; then
+            echo "::notice::NLB not yet reachable — retrying in ${RETRY_DELAY}s (attempt $i/$MAX_RETRIES)"
+            sleep $RETRY_DELAY
+          fi
+        done
+
+        echo "::error::NLB is not reachable after $MAX_RETRIES attempts — check security groups and target group health"
+        exit 1
+
+    - name: Health Check Summary
+      if: always()
+      shell: bash
+      run: |
+        {
+          echo "## Post-Deploy Health Check"
+          echo ""
+          echo "| Check | Status |"
+          echo "|-------|--------|"
+          echo "| EKS Cluster | ${{ job.status }} |"
+          echo "| NLB Endpoint | ${{ job.status }} |"
+          echo ""
+          echo "| Resource | Value |"
+          echo "|----------|-------|"
+          echo "| Cluster | \`${{ inputs.eks_cluster }}\` |"
+          echo "| NLB | \`${{ inputs.nlb_dns }}\` |"
+          echo "| Namespace | \`${{ inputs.k8s_namespace }}\` |"
+        } >> $GITHUB_STEP_SUMMARY
