@@ -1,10 +1,10 @@
-name: Rollback Infrastructure
+﻿name: Rollback Infrastructure
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to rollback to (e.g. v1.2.3) — must be an existing tag'
+        description: 'Version to rollback to (e.g. v1.2.3) â€” must be an existing tag'
         required: true
         type: string
       environment:
@@ -20,13 +20,13 @@ permissions:
   contents: read
   id-token: write
 
-# Same concurrency group as deploy — prevents a rollback from running alongside a deploy.
+# Same concurrency group as deploy â€” prevents a rollback from running alongside a deploy.
 concurrency:
   group: deploy
   cancel-in-progress: false
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
   ENVIRONMENT: ${{ github.event.inputs.environment || 'production' }}
 
 jobs:
@@ -74,17 +74,17 @@ jobs:
             exit 1
           fi
 
-      # plan_sha is intentionally omitted — rollback always generates a fresh plan
+      # plan_sha is intentionally omitted â€” rollback always generates a fresh plan
       # against the checked-out tag to avoid applying a stale/mismatched artifact.
       - name: Apply Infrastructure at ${{ github.event.inputs.version }}
         id: apply
         uses: ./.github/actions/deploy/tf-apply
         with:
-          tf_version: ${{ vars.TF_VERSION || '1.7.0' }}
+          tf_version: ${{ secrets.TF_VERSION || '1.7.0' }}
           working_dir: >-
             ${{ env.ENVIRONMENT == 'staging'
-              && (vars.TF_WORKING_DIR_STAGING || 'terraform/environments/staging')
-              || (vars.TF_WORKING_DIR || 'terraform/environments/production') }}
+              && (secrets.TF_WORKING_DIR_STAGING || 'terraform/environments/staging')
+              || (secrets.TF_WORKING_DIR || 'terraform/environments/production') }}
           environment: ${{ env.ENVIRONMENT }}
           aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -94,7 +94,7 @@ jobs:
           dd_api_key: ${{ secrets.DD_API_KEY }}
           dd_app_key: ${{ secrets.DD_APP_KEY }}
           dd_api_url: ${{ secrets.DD_API_URL }}
-          k8s_namespace: ${{ vars.K8S_NAMESPACE || 'app-oficina-tech' }}
+          k8s_namespace: ${{ secrets.K8S_NAMESPACE || 'app-oficina-tech' }}
 
       - name: Post-Deploy Health Check
         uses: ./.github/actions/deploy/post-check
@@ -102,8 +102,8 @@ jobs:
           eks_cluster: ${{ steps.apply.outputs.eks_cluster }}
           nlb_dns: ${{ steps.apply.outputs.nlb_dns }}
           aws_region: ${{ env.AWS_REGION }}
-          k8s_namespace: ${{ vars.K8S_NAMESPACE || 'app-oficina-tech' }}
-          health_endpoint: ${{ vars.HEALTH_ENDPOINT || '/health' }}
+          k8s_namespace: ${{ secrets.K8S_NAMESPACE || 'app-oficina-tech' }}
+          health_endpoint: ${{ secrets.HEALTH_ENDPOINT || '/health' }}
 
       - name: Rollback Summary
         if: always()
