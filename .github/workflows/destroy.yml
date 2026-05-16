@@ -25,7 +25,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   ENVIRONMENT: ${{ github.event.inputs.environment }}
 
 jobs:
@@ -57,28 +57,28 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: ${{ secrets.TF_VERSION || '1.7.0' }}
+          terraform_version: ${{ vars.TF_VERSION || '1.7.0' }}
           terraform_wrapper: false
 
       - name: Terraform Init
-        working-directory: ${{ secrets.TF_WORKING_DIR || 'terraform/environments/production' }}
+        working-directory: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
         run: |
           terraform init \
-            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
             -backend-config="region=${{ env.AWS_REGION }}"
 
       - name: Delete Kubernetes Resources
         continue-on-error: true
         run: |
-          EKS_CLUSTER=$(cd "${{ secrets.TF_WORKING_DIR || 'terraform/environments/production' }}" \
+          EKS_CLUSTER=$(cd "${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}" \
             && terraform output -raw eks_cluster_name 2>/dev/null || echo "")
 
           if [ -n "$EKS_CLUSTER" ]; then
             aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "${{ env.AWS_REGION }}"
-            kubectl delete all --all -n ${{ secrets.K8S_NAMESPACE || 'app-oficina-tech' }} --ignore-not-found=true || true
-            kubectl delete namespace ${{ secrets.K8S_NAMESPACE || 'app-oficina-tech' }} --ignore-not-found=true || true
+            kubectl delete all --all -n ${{ vars.K8S_NAMESPACE || 'app-oficina-tech' }} --ignore-not-found=true || true
+            kubectl delete namespace ${{ vars.K8S_NAMESPACE || 'app-oficina-tech' }} --ignore-not-found=true || true
           fi
 
       - name: Terraform Destroy
-        working-directory: ${{ secrets.TF_WORKING_DIR || 'terraform/environments/production' }}
+        working-directory: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
         run: terraform destroy -auto-approve

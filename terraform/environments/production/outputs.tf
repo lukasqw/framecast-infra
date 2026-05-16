@@ -98,6 +98,27 @@ output "aws_account_id" {
   value       = data.aws_caller_identity.current.account_id
 }
 
+# SQS Outputs — consumidos pelos MSs via infra-connect
+output "sqs_customer_deleted_url" {
+  description = "URL da fila SQS customer-deleted (ms1 → ms2)"
+  value       = aws_sqs_queue.customer_deleted.url
+}
+
+output "sqs_inventory_op_requested_url" {
+  description = "URL da fila SQS inventory-op-requested (ms2 → ms3)"
+  value       = aws_sqs_queue.inventory_op_requested.url
+}
+
+output "sqs_inventory_op_succeeded_url" {
+  description = "URL da fila SQS inventory-op-succeeded (ms3 → ms2)"
+  value       = aws_sqs_queue.inventory_op_succeeded.url
+}
+
+output "sqs_inventory_op_failed_url" {
+  description = "URL da fila SQS inventory-op-failed (ms3 → ms2)"
+  value       = aws_sqs_queue.inventory_op_failed.url
+}
+
 # GitHub Actions Output
 output "github_secrets_json" {
   description = "JSON formatado para criar GitHub Secrets"

@@ -1,4 +1,5 @@
 ﻿name: Deploy
+run-name: 🚀 ${{ github.event.pull_request.title || format('Deploy {0}', github.ref_name) }}
 
 on:
   pull_request:
@@ -26,7 +27,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   ENVIRONMENT: ${{ github.event.inputs.environment || 'production' }}
   # Repository Variables â€” configure in Settings â†’ Secrets and Variables â†’ Variables
   # Required: AWS_REGION, TF_VERSION, TF_WORKING_DIR, K8S_NAMESPACE
@@ -86,12 +87,12 @@ jobs:
         id: apply
         uses: ./.github/actions/deploy/tf-apply
         with:
-          tf_version: ${{ secrets.TF_VERSION || '1.7.0' }}
+          tf_version: ${{ vars.TF_VERSION || '1.7.0' }}
           working_dir: >-
             ${{ env.ENVIRONMENT == 'staging'
-              && (secrets.TF_WORKING_DIR_STAGING || 'terraform/environments/staging')
-              || (secrets.TF_WORKING_DIR || 'terraform/environments/production') }}
-          tf_state_bucket: ${{ secrets.TF_STATE_BUCKET || 'fiap-soat-tf-backend-oficina-tech' }}
+              && (vars.TF_WORKING_DIR_STAGING || 'terraform/environments/staging')
+              || (vars.TF_WORKING_DIR || 'terraform/environments/production') }}
+          tf_state_bucket: ${{ vars.TF_STATE_BUCKET || 'fiap-soat-tf-backend-oficina-tech' }}
           environment: ${{ env.ENVIRONMENT }}
           aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -101,7 +102,7 @@ jobs:
           dd_api_key: ${{ secrets.DD_API_KEY }}
           dd_app_key: ${{ secrets.DD_APP_KEY }}
           dd_api_url: ${{ secrets.DD_API_URL }}
-          k8s_namespace: ${{ secrets.K8S_NAMESPACE || 'app-oficina-tech' }}
+          k8s_namespace: ${{ vars.K8S_NAMESPACE || 'app-oficina-tech' }}
           plan_sha: ${{ github.event.pull_request.head.sha }}
 
       - name: Post-Deploy Health Check
@@ -110,8 +111,8 @@ jobs:
           eks_cluster: ${{ steps.apply.outputs.eks_cluster }}
           nlb_dns: ${{ steps.apply.outputs.nlb_dns }}
           aws_region: ${{ env.AWS_REGION }}
-          k8s_namespace: ${{ secrets.K8S_NAMESPACE || 'app-oficina-tech' }}
-          health_endpoint: ${{ secrets.HEALTH_ENDPOINT || '/health' }}
+          k8s_namespace: ${{ vars.K8S_NAMESPACE || 'app-oficina-tech' }}
+          health_endpoint: ${{ vars.HEALTH_ENDPOINT || '/health' }}
           skip_nlb_http_probe: 'true'
 
       # Tag is created only after a successful health check â€” a tag represents
@@ -140,5 +141,5 @@ jobs:
             echo ""
             echo "**Endpoints:**"
             echo "- Application: http://${{ steps.apply.outputs.nlb_dns }}"
-            echo "- Health: http://${{ steps.apply.outputs.nlb_dns }}${{ secrets.HEALTH_ENDPOINT || '/health' }}"
+            echo "- Health: http://${{ steps.apply.outputs.nlb_dns }}${{ vars.HEALTH_ENDPOINT || '/health' }}"
           } >> $GITHUB_STEP_SUMMARY

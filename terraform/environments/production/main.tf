@@ -63,6 +63,55 @@ module "datadog" {
   datadog_app_key = var.datadog_app_key
 }
 
+# SQS Queues — mensageria assíncrona entre microsserviços
+# customer-deleted: ms1 publica → ms2 consome
+resource "aws_sqs_queue" "customer_deleted" {
+  name                       = "${lower(var.project_name)}-customer-deleted"
+  message_retention_seconds  = 86400
+  visibility_timeout_seconds = 30
+
+  tags = merge(local.common_tags, {
+    Name    = "${lower(var.project_name)}-customer-deleted"
+    Purpose = "ms1-to-ms2"
+  })
+}
+
+# inventory-op-requested: ms2 publica → ms3 consome
+resource "aws_sqs_queue" "inventory_op_requested" {
+  name                       = "${lower(var.project_name)}-inventory-op-requested"
+  message_retention_seconds  = 86400
+  visibility_timeout_seconds = 30
+
+  tags = merge(local.common_tags, {
+    Name    = "${lower(var.project_name)}-inventory-op-requested"
+    Purpose = "ms2-to-ms3"
+  })
+}
+
+# inventory-op-succeeded: ms3 publica → ms2 consome
+resource "aws_sqs_queue" "inventory_op_succeeded" {
+  name                       = "${lower(var.project_name)}-inventory-op-succeeded"
+  message_retention_seconds  = 86400
+  visibility_timeout_seconds = 30
+
+  tags = merge(local.common_tags, {
+    Name    = "${lower(var.project_name)}-inventory-op-succeeded"
+    Purpose = "ms3-to-ms2"
+  })
+}
+
+# inventory-op-failed: ms3 publica → ms2 consome
+resource "aws_sqs_queue" "inventory_op_failed" {
+  name                       = "${lower(var.project_name)}-inventory-op-failed"
+  message_retention_seconds  = 86400
+  visibility_timeout_seconds = 30
+
+  tags = merge(local.common_tags, {
+    Name    = "${lower(var.project_name)}-inventory-op-failed"
+    Purpose = "ms3-to-ms2"
+  })
+}
+
 # Regra adicional: Permitir que o NLB alcance a NodePort no cluster security group (auto-criado pelo EKS)
 resource "aws_vpc_security_group_ingress_rule" "eks_cluster_nodeport" {
   security_group_id = module.eks.cluster_security_group_id
