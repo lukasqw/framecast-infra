@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: app-oficina-tech
+  labels:
+    name: app-oficina-tech
+    env: local
