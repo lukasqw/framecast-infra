@@ -2,16 +2,9 @@ name: CI
 
 on:
   pull_request:
-    branches: [ develop, main ]
-    paths:
-      - "terraform/**"
-      - "kubernetes/**"
-      - ".github/workflows/**"
+    branches: [develop, main]
   push:
-    branches: [ develop ]
-    paths:
-      - "terraform/**"
-      - "kubernetes/**"
+    branches: [develop]
 
 permissions:
   contents: read
