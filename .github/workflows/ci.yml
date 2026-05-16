@@ -59,6 +59,7 @@ jobs:
         uses: ./.github/actions/ci/tf-security
         with:
           working_dir: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
   plan:
     name: Terraform Plan

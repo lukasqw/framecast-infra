@@ -51,6 +51,12 @@ module "nlb" {
   target_group_port = 30080
   health_check_path = "/health"
 
+  microservice_ports = {
+    ms-identity      = { node_port = 30081, health_check_path = "/health" }
+    ms-order-service = { node_port = 30082, health_check_path = "/health" }
+    ms-workshop      = { node_port = 30083, health_check_path = "/health" }
+  }
+
   tags = local.common_tags
 }
 
@@ -115,9 +121,9 @@ resource "aws_sqs_queue" "inventory_op_failed" {
 # Regra adicional: Permitir que o NLB alcance a NodePort no cluster security group (auto-criado pelo EKS)
 resource "aws_vpc_security_group_ingress_rule" "eks_cluster_nodeport" {
   security_group_id = module.eks.cluster_security_group_id
-  description       = "Allow NLB to reach NodePort 30080 (cluster SG)"
+  description       = "Allow NLB to reach NodePorts 30080-30083 (cluster SG)"
   from_port         = 30080
-  to_port           = 30080
+  to_port           = 30083
   ip_protocol       = "tcp"
   cidr_ipv4         = "0.0.0.0/0"
 

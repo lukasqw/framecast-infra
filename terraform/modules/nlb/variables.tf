@@ -78,6 +78,15 @@ variable "deregistration_delay" {
   default     = 30
 }
 
+variable "microservice_ports" {
+  description = "NodePorts dos microsserviços expostos via NLB (porta listener = porta NodePort)"
+  type = map(object({
+    node_port         = number
+    health_check_path = string
+  }))
+  default = {}
+}
+
 variable "tags" {
   description = "Tags para os recursos"
   type        = map(string)

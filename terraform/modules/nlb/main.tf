@@ -69,3 +69,52 @@ resource "aws_autoscaling_attachment" "this" {
   autoscaling_group_name = var.asg_name
   lb_target_group_arn    = aws_lb_target_group.this.arn
 }
+
+# ── Target groups, listeners e ASG attachments por microsserviço ────────────
+resource "aws_lb_target_group" "ms" {
+  for_each = var.microservice_ports
+
+  name        = "${var.name}-${each.key}-tg"
+  port        = each.value.node_port
+  protocol    = "TCP"
+  vpc_id      = var.vpc_id
+  target_type = "instance"
+
+  health_check {
+    enabled             = true
+    healthy_threshold   = var.health_check_healthy_threshold
+    unhealthy_threshold = var.health_check_unhealthy_threshold
+    interval            = var.health_check_interval
+    port                = tostring(each.value.node_port)
+    protocol            = "HTTP"
+    path                = each.value.health_check_path
+    matcher             = var.health_check_matcher
+  }
+
+  deregistration_delay = var.deregistration_delay
+
+  tags = merge(var.tags, {
+    Name    = "${var.name}-${each.key}-tg"
+    Service = each.key
+  })
+}
+
+resource "aws_lb_listener" "ms" {
+  for_each = var.microservice_ports
+
+  load_balancer_arn = aws_lb.this.arn
+  port              = each.value.node_port
+  protocol          = "TCP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.ms[each.key].arn
+  }
+}
+
+resource "aws_autoscaling_attachment" "ms" {
+  for_each = var.microservice_ports
+
+  autoscaling_group_name = var.asg_name
+  lb_target_group_arn    = aws_lb_target_group.ms[each.key].arn
+}
