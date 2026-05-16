@@ -72,8 +72,8 @@ jobs:
 
           if [ -n "$EKS_CLUSTER" ]; then
             aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "${{ env.AWS_REGION }}"
-            kubectl delete all --all -n ${{ vars.K8S_NAMESPACE }} --ignore-not-found=true || true
-            kubectl delete namespace ${{ vars.K8S_NAMESPACE }} --ignore-not-found=true || true
+            kubectl delete all --all -n ${{ vars.K8S_NAMESPACE || 'app-oficina-tech' }} --ignore-not-found=true || true
+            kubectl delete namespace ${{ vars.K8S_NAMESPACE || 'app-oficina-tech' }} --ignore-not-found=true || true
           fi
 
       - name: Terraform Destroy

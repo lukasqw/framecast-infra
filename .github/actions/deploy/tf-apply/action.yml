@@ -232,6 +232,8 @@ runs:
           echo "::warning::k8s_namespace não configurado (K8S_NAMESPACE) — pulando ConfigMap de infraestrutura"
           exit 0
         fi
+        # Cria o namespace se ainda não existir (será o mesmo namespace usado pelos microsserviços)
+        kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
         kubectl create configmap infra-outputs \
           --from-literal=NLB_DNS="$CM_NLB_DNS" \
           --from-literal=EKS_CLUSTER="$CM_EKS_CLUSTER" \

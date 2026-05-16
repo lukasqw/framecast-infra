@@ -94,7 +94,7 @@ jobs:
           dd_api_key: ${{ secrets.DD_API_KEY }}
           dd_app_key: ${{ secrets.DD_APP_KEY }}
           dd_api_url: ${{ secrets.DD_API_URL }}
-          k8s_namespace: ${{ vars.K8S_NAMESPACE }}
+          k8s_namespace: ${{ vars.K8S_NAMESPACE || 'app-oficina-tech' }}
 
       - name: Post-Deploy Health Check
         uses: ./.github/actions/deploy/post-check
@@ -102,7 +102,7 @@ jobs:
           eks_cluster: ${{ steps.apply.outputs.eks_cluster }}
           nlb_dns: ${{ steps.apply.outputs.nlb_dns }}
           aws_region: ${{ env.AWS_REGION }}
-          k8s_namespace: ${{ vars.K8S_NAMESPACE }}
+          k8s_namespace: ${{ vars.K8S_NAMESPACE || 'app-oficina-tech' }}
           health_endpoint: ${{ vars.HEALTH_ENDPOINT || '/health' }}
 
       - name: Rollback Summary
