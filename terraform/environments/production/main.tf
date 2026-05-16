@@ -52,9 +52,9 @@ module "nlb" {
   health_check_path = "/health"
 
   microservice_ports = {
-    ms-identity      = { node_port = 30081, health_check_path = "/health" }
-    ms-order-service = { node_port = 30082, health_check_path = "/health" }
-    ms-workshop      = { node_port = 30083, health_check_path = "/health" }
+    ms1 = { node_port = 30081, health_check_path = "/health" }
+    ms2 = { node_port = 30082, health_check_path = "/health" }
+    ms3 = { node_port = 30083, health_check_path = "/health" }
   }
 
   tags = local.common_tags
