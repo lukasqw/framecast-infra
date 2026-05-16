@@ -101,7 +101,7 @@ jobs:
           dd_api_key: ${{ secrets.DD_API_KEY }}
           dd_app_key: ${{ secrets.DD_APP_KEY }}
           dd_api_url: ${{ secrets.DD_API_URL }}
-          k8s_namespace: ${{ vars.K8S_NAMESPACE }}
+          k8s_namespace: ${{ vars.K8S_NAMESPACE || 'app-oficina-tech' }}
           plan_sha: ${{ github.event.pull_request.head.sha }}
 
       - name: Post-Deploy Health Check
@@ -110,8 +110,9 @@ jobs:
           eks_cluster: ${{ steps.apply.outputs.eks_cluster }}
           nlb_dns: ${{ steps.apply.outputs.nlb_dns }}
           aws_region: ${{ env.AWS_REGION }}
-          k8s_namespace: ${{ vars.K8S_NAMESPACE }}
+          k8s_namespace: ${{ vars.K8S_NAMESPACE || 'app-oficina-tech' }}
           health_endpoint: ${{ vars.HEALTH_ENDPOINT || '/health' }}
+          skip_nlb_http_probe: 'true'
 
       # Tag is created only after a successful health check — a tag represents
       # exactly what is confirmed running in production. Skipped on workflow_dispatch

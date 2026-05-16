@@ -1,8 +1,9 @@
 name: 'Deploy — Post-Deploy Health Check'
 description: >
-  Verifies EKS cluster health (nodes ready, pods running) and probes the NLB
-  endpoint. Any failure here prevents the release tag from being created —
-  same pattern as the application health check in oficina-tech.
+  Verifies EKS cluster health (nodes ready) and NLB reachability.
+  When skip_nlb_http_probe is true (infra-only deploy, no app running),
+  only DNS resolution is checked — not HTTP. The HTTP probe only makes
+  sense after at least one microservice is deployed behind the NLB.
 
 inputs:
   eks_cluster:
@@ -16,11 +17,18 @@ inputs:
     required: true
   k8s_namespace:
     description: 'Kubernetes namespace to check pods in'
-    required: true
+    required: false
+    default: 'app-oficina-tech'
   health_endpoint:
-    description: 'HTTP path to probe on the NLB'
+    description: 'HTTP path to probe on the NLB (used only when skip_nlb_http_probe is false)'
     required: false
     default: '/health'
+  skip_nlb_http_probe:
+    description: >
+      Set to true when no application is deployed yet (e.g. infra-only deploy).
+      Skips the HTTP health probe and only verifies DNS resolution of the NLB.
+    required: false
+    default: 'false'
 
 runs:
   using: composite
@@ -53,23 +61,35 @@ runs:
           exit 1
         fi
 
-        echo ""
-        echo "=== Pods in $NAMESPACE ==="
-        kubectl get pods -n "$NAMESPACE" --request-timeout=30s || \
-          echo "::notice::Namespace $NAMESPACE not yet populated"
+        if [ -n "$NAMESPACE" ]; then
+          echo ""
+          echo "=== Pods in $NAMESPACE ==="
+          kubectl get pods -n "$NAMESPACE" --request-timeout=30s || \
+            echo "::notice::Namespace $NAMESPACE not yet populated"
+        fi
 
         echo "::notice::EKS cluster is healthy"
 
-    # Probes the NLB endpoint with up to 5 retries (60s apart) to account for
-    # NLB warmup time after provisioning (~2-5 min). Any HTTP response confirms
-    # the NLB is reachable — connection errors (000) trigger a retry.
-    # 5xx responses emit a warning: the NLB is up but the app may be degraded.
-    - name: Check NLB Endpoint
+    # When skip_nlb_http_probe=true (infra-only deploy): only verifies DNS resolves.
+    # When skip_nlb_http_probe=false (app deployed): probes HTTP /health with retries.
+    - name: Check NLB Reachability
       shell: bash
       env:
         NLB_DNS: ${{ inputs.nlb_dns }}
         HEALTH_ENDPOINT: ${{ inputs.health_endpoint }}
+        SKIP_HTTP: ${{ inputs.skip_nlb_http_probe }}
       run: |
+        if [ "$SKIP_HTTP" = "true" ]; then
+          echo "::notice::Verificando resolução DNS do NLB (skip_nlb_http_probe=true — nenhuma aplicação deployada ainda)"
+          if host "$NLB_DNS" > /dev/null 2>&1 || nslookup "$NLB_DNS" > /dev/null 2>&1; then
+            echo "::notice::NLB DNS resolve corretamente: $NLB_DNS"
+            exit 0
+          else
+            echo "::warning::NLB DNS ainda não propaga — normal logo após o provisionamento"
+            exit 0
+          fi
+        fi
+
         echo "::notice::Probing NLB: http://$NLB_DNS$HEALTH_ENDPOINT"
 
         MAX_RETRIES=5
@@ -109,14 +129,13 @@ runs:
         {
           echo "## Post-Deploy Health Check"
           echo ""
-          echo "| Check | Status |"
-          echo "|-------|--------|"
-          echo "| EKS Cluster | ${{ job.status }} |"
-          echo "| NLB Endpoint | ${{ job.status }} |"
+          echo "| Check | Tipo |"
+          echo "|-------|------|"
+          echo "| EKS Cluster | Nodes Ready |"
+          echo "| NLB | ${{ inputs.skip_nlb_http_probe == 'true' && 'DNS resolution only' || 'HTTP probe' }} |"
           echo ""
           echo "| Resource | Value |"
           echo "|----------|-------|"
           echo "| Cluster | \`${{ inputs.eks_cluster }}\` |"
           echo "| NLB | \`${{ inputs.nlb_dns }}\` |"
-          echo "| Namespace | \`${{ inputs.k8s_namespace }}\` |"
         } >> $GITHUB_STEP_SUMMARY

@@ -52,7 +52,8 @@ inputs:
     default: ''
   k8s_namespace:
     description: 'Kubernetes namespace — used for the infra ConfigMap'
-    required: true
+    required: false
+    default: 'app-oficina-tech'
   plan_sha:
     description: >
       SHA of the commit whose CI plan artifact should be reused.
@@ -221,10 +222,19 @@ runs:
       if: steps.outputs.outputs.eks_cluster != ''
       shell: bash
       continue-on-error: true
+      env:
+        NAMESPACE: ${{ inputs.k8s_namespace }}
+        CM_NLB_DNS: ${{ steps.outputs.outputs.nlb_dns }}
+        CM_EKS_CLUSTER: ${{ steps.outputs.outputs.eks_cluster }}
+        CM_VPC_ID: ${{ steps.outputs.outputs.vpc_id }}
       run: |
+        if [ -z "$NAMESPACE" ]; then
+          echo "::warning::k8s_namespace não configurado (K8S_NAMESPACE) — pulando ConfigMap de infraestrutura"
+          exit 0
+        fi
         kubectl create configmap infra-outputs \
-          --from-literal=NLB_DNS="${{ steps.outputs.outputs.nlb_dns }}" \
-          --from-literal=EKS_CLUSTER="${{ steps.outputs.outputs.eks_cluster }}" \
-          --from-literal=VPC_ID="${{ steps.outputs.outputs.vpc_id }}" \
-          -n ${{ inputs.k8s_namespace }} \
+          --from-literal=NLB_DNS="$CM_NLB_DNS" \
+          --from-literal=EKS_CLUSTER="$CM_EKS_CLUSTER" \
+          --from-literal=VPC_ID="$CM_VPC_ID" \
+          -n "$NAMESPACE" \
           --dry-run=client -o yaml | kubectl apply -f -
