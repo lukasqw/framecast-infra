@@ -15,6 +15,9 @@ inputs:
     description: 'Path to the Terraform root module'
     required: false
     default: 'terraform/environments/production'
+  tf_state_bucket:
+    description: 'S3 bucket for Terraform state — maps to TF_STATE_BUCKET GitHub Actions variable'
+    required: true
   environment:
     description: 'Target environment (e.g. production)'
     required: false
@@ -101,11 +104,11 @@ runs:
     - name: Terraform Init
       shell: bash
       working-directory: ${{ inputs.working_dir }}
-      run: terraform init
+      run: |
+        terraform init \
+          -backend-config="bucket=${{ inputs.tf_state_bucket }}" \
+          -backend-config="region=${{ inputs.aws_region }}"
 
-    # Attempt to reuse the plan artifact produced by CI for the same commit.
-    # This avoids re-running plan (~3-5 min) when the PR was just reviewed.
-    # Falls back gracefully if the artifact has expired or plan_sha is not set.
     - name: Download CI Plan Artifact
       id: download_plan
       if: inputs.plan_sha != ''
@@ -137,8 +140,6 @@ runs:
           echo "::notice::No infrastructure changes detected"
         fi
 
-    # Always show the plan that will be applied — critical for audit trail and
-    # especially important when reusing a CI artifact (Plan step was skipped).
     - name: Show Plan
       shell: bash
       working-directory: ${{ inputs.working_dir }}
@@ -174,11 +175,11 @@ runs:
         EKS_ENDPOINT=$(terraform output -raw eks_cluster_endpoint 2>/dev/null || echo "")
         VPC_ID=$(terraform output -raw vpc_id 2>/dev/null || echo "")
 
-        echo "nlb_dns=$NLB_DNS"       >> $GITHUB_OUTPUT
-        echo "nlb_arn=$NLB_ARN"       >> $GITHUB_OUTPUT
+        echo "nlb_dns=$NLB_DNS"         >> $GITHUB_OUTPUT
+        echo "nlb_arn=$NLB_ARN"         >> $GITHUB_OUTPUT
         echo "eks_cluster=$EKS_CLUSTER" >> $GITHUB_OUTPUT
         echo "eks_endpoint=$EKS_ENDPOINT" >> $GITHUB_OUTPUT
-        echo "vpc_id=$VPC_ID"         >> $GITHUB_OUTPUT
+        echo "vpc_id=$VPC_ID"           >> $GITHUB_OUTPUT
 
         echo "::notice::EKS: $EKS_CLUSTER | NLB: $NLB_DNS | VPC: $VPC_ID"
 
