@@ -1,662 +1,323 @@
-# Oficina Tech - Infrastructure
+# oficina-tech-infra
 
-Infraestrutura como código (IaC) para o projeto Oficina Tech, provisionando cluster EKS, networking, load balancers e recursos AWS necessários.
+Infraestrutura base de toda a plataforma Oficina Tech na AWS, provisionada via Terraform. Este repositório é a fundação — todos os outros repos dependem dos outputs criados aqui via remote state S3.
 
-## Descrição
+> Topologia de rede, componentes e outputs: [docs/architecture.md](docs/architecture.md)
+> Regras de modificação, segurança e acesso: [docs/business-rules.md](docs/business-rules.md)
+> Workflows, actions, variáveis e secrets: [.github/README.md](.github/README.md)
 
-Este repositório contém toda a infraestrutura base do sistema Oficina Tech na AWS, incluindo cluster Kubernetes (EKS), networking (VPC, subnets, security groups), load balancers (NLB), e configurações de acesso e segurança. A infraestrutura é totalmente automatizada usando Terraform com módulos reutilizáveis e pipelines CI/CD completos.
+---
 
-O projeto provisiona um cluster EKS v1.31 com node groups auto-scaling, Network Load Balancer para roteamento de tráfego externo, AWS Load Balancer Controller para gerenciar Ingress resources, cert-manager para certificados TLS, e toda a configuração de IAM, RBAC e security groups necessária para operação segura.
+## O que este repo provisiona
 
-## Estrutura de Pastas
+| Recurso | Detalhes |
+|---------|----------|
+| Cluster EKS | `EKS-OFICINA-TECH`, Kubernetes 1.31 |
+| Node Group | `oficina_tech`, instâncias `t3.medium`, min 1 / desired 2 / max 3 |
+| Network Load Balancer | `EKS-OFICINA-TECH-nlb`, internet-facing, TCP |
+| Security Group EKS | Ingress 443 e 30080–30083; egress livre |
+| SQS Queues | 4 filas para mensageria entre microsserviços |
+| VPC / Subnets | Descobertos via data source (VPC padrão `172.31.0.0/16`), filtrados para `us-east-1a` e `us-east-1b` |
+
+**Nao gerenciado aqui:** VPC/subnets/NAT Gateway, banco de dados, API Gateway, deploy da aplicação, aws-auth ConfigMap.
+
+---
+
+## EKS
+
+- **Versão Kubernetes:** 1.31
+- **Nome do cluster:** `EKS-OFICINA-TECH`
+- **Modo de autenticação:** `API_AND_CONFIG_MAP`
+- **Endpoint:** acesso público e privado habilitados (`0.0.0.0/0`)
+- **Logs habilitados:** `api`, `audit`, `authenticator`, `controllerManager`, `scheduler`
+
+### Node Group
+
+| Parâmetro | Valor |
+|-----------|-------|
+| Nome | `oficina_tech` |
+| Instance type | `t3.medium` |
+| Capacity type | `ON_DEMAND` |
+| Disk size | 20 GB |
+| Min | 1 |
+| Desired | 2 |
+| Max | 3 |
+| Max unavailable (update) | 1 |
+
+### Acesso ao Cluster
+
+O acesso é gerenciado via EKS Access Entries API (`eks-access.tf`). O caller que executa o Terraform recebe `AmazonEKSClusterAdminPolicy` automaticamente. Um principal adicional pode ser configurado via variável `principal_arn`.
+
+---
+
+## NLB — Network Load Balancer
+
+- **Nome:** `EKS-OFICINA-TECH-nlb`
+- **Tipo:** internet-facing (não interno)
+- **Protocolo:** TCP (camada 4)
+- **Cross-zone load balancing:** desabilitado por padrão
+- **Deletion protection:** desabilitada por padrão
+
+### Listeners e Target Groups
+
+| Listener (porta NLB) | Target Group | NodePort | Health Check Path | Microsserviço |
+|----------------------|--------------|----------|-------------------|---------------|
+| TCP:80 | `EKS-OFICINA-TECH-nlb-tg` | 30080 | `/health` | roteamento principal |
+| TCP:30081 | `EKS-OFICINA-TECH-nlb-ms1-tg` | 30081 | `/health` | ms-identity |
+| TCP:30082 | `EKS-OFICINA-TECH-nlb-ms2-tg` | 30082 | `/health` | ms-order-service |
+| TCP:30083 | `EKS-OFICINA-TECH-nlb-ms3-tg` | 30083 | `/health` | ms-workshop |
+
+Todos os target groups usam `target_type = instance` e registram os nodes do EKS via `aws_autoscaling_attachment`.
+
+**Health check:** HTTP, intervalo 30s, threshold healthy/unhealthy = 3, códigos de sucesso `200-299`, deregistration delay 30s.
+
+---
+
+## Security Groups
+
+### `EKS-OFICINA-TECH-eks-sg` (módulo `security-groups`)
+
+| Direção | Porta(s) | Protocolo | Origem | Finalidade |
+|---------|----------|-----------|--------|-----------|
+| Ingress | 443 | TCP | `0.0.0.0/0` | HTTPS para o control plane |
+| Ingress | 30080–30083 | TCP | `0.0.0.0/0` | NodePorts dos microsserviços via NLB |
+| Egress | todos | todos | `0.0.0.0/0` | tráfego de saída livre |
+
+### Regra adicional no cluster SG auto-criado pelo EKS
+
+Criada diretamente em `main.tf` via `aws_vpc_security_group_ingress_rule.eks_cluster_nodeport`:
+
+| Direção | Porta(s) | Protocolo | Origem | Finalidade |
+|---------|----------|-----------|--------|-----------|
+| Ingress | 30080–30083 | TCP | `0.0.0.0/0` | NLB alcanca NodePorts no cluster SG gerenciado pelo EKS |
+
+---
+
+## SQS
+
+Quatro filas provisionadas diretamente em `main.tf`. Nenhuma DLQ configurada.
+
+| Nome da fila | Direção | Visibility timeout | Retencao |
+|---|---|---|---|
+| `eks-oficina-tech-customer-deleted` | ms1 publica, ms2 consome | 30s | 86400s (1 dia) |
+| `eks-oficina-tech-inventory-op-requested` | ms2 publica, ms3 consome | 30s | 86400s (1 dia) |
+| `eks-oficina-tech-inventory-op-succeeded` | ms3 publica, ms2 consome | 30s | 86400s (1 dia) |
+| `eks-oficina-tech-inventory-op-failed` | ms3 publica, ms2 consome | 30s | 86400s (1 dia) |
+
+> Os nomes reais seguem o padrao `${lower(var.project_name)}-<sufixo>`. Com `project_name = "EKS-OFICINA-TECH"` o prefixo fica `eks-oficina-tech-`.
+
+---
+
+## IAM
+
+Este repo nao cria roles IAM proprias. Utiliza a `LabRole` da AWS Academy, passada via variavel `lab_role` e resolvida em `locals.tf` como `lab_role_arn`. Essa role e usada tanto para o cluster EKS quanto para os nodes. IRSA (OIDC Provider) nao esta configurado neste repo.
+
+---
+
+## Modulos Terraform
 
 ```
-
-oficina-tech-infra/
-├── .github/
-│   └── workflows/              # Pipelines CI/CD
-│       ├── ci.yml              # Validação e testes
-│       ├── deploy.yml          # Deploy automatizado
-│       ├── destroy.yml         # Destruição de recursos
-│       └── release.yml         # Versionamento e releases
-├── docs/
-│   └── infrastructure-component-diagram.puml  # Diagrama de arquitetura
-├── k8s/
-│   ├── rbac/                   # Configurações RBAC
-│   └── aws-auth-configmap.yaml # ConfigMap de autenticação
-├── terraform/
-│   ├── environments/           # Configurações por ambiente
-│   │   └── production/         # Ambiente de produção
-│   │       ├── backend.tf          # Backend S3 para state
-│   │       ├── data.tf             # Data sources
-│   │       ├── eks-access.tf       # Access entries do EKS
-│   │       ├── aws-auth-configmap.tf  # ConfigMap auth
-│   │       ├── locals.tf           # Variáveis locais
-│   │       ├── main.tf             # Recursos principais
-│   │       ├── outputs.tf          # Outputs
-│   │       ├── provider.tf         # Provider AWS
-│   │       ├── variables.tf        # Variáveis de entrada
-│   │       ├── versions.tf         # Versões requeridas
-│   │       └── terraform.tfvars.example  # Exemplo de variáveis
-│   └── modules/                # Módulos Terraform reutilizáveis
-│       ├── alb-controller/         # AWS Load Balancer Controller
-│       ├── alb-controller-role/    # IAM role para ALB Controller
-│       ├── eks/                    # Cluster EKS
-│       ├── nlb/                    # Network Load Balancer
-│       ├── rds/                    # RDS PostgreSQL (deprecated)
-│       └── security-groups/        # Security Groups
-├── .gitignore
-├── terraform.tfstate           # State local (backup)
-└── README.md
+terraform/modules/
+├── eks/                  # aws_eks_cluster + aws_eks_node_group
+├── nlb/                  # aws_lb, aws_lb_listener, aws_lb_target_group, aws_autoscaling_attachment
+├── security-groups/      # aws_security_group + regras ingress/egress
+├── alb-controller/       # Helm release do AWS Load Balancer Controller (nao instanciado em producao)
+├── alb-controller-role/  # IAM role para o ALB Controller via IRSA (nao instanciado em producao)
+├── rds/                  # RDS PostgreSQL (deprecated — banco gerenciado pelo repo oficina-tech-db)
+└── datadog/              # Monitors e dashboards Datadog (instanciado apenas quando api_key e fornecida)
 ```
 
-## Funcionalidades
+A configuracao de producao fica em `terraform/environments/production/`.
 
-### Cluster Kubernetes (EKS)
+---
 
-- **EKS v1.31**: Cluster Kubernetes gerenciado pela AWS
-- **Node Groups**: Auto-scaling com instâncias t3.medium
-- **Multi-AZ**: Deployment em múltiplas zonas de disponibilidade
-- **Access Entries**: Autenticação moderna via EKS Access API
-- **ConfigMap Auth**: Suporte legado para aws-auth ConfigMap
-- **IRSA**: IAM Roles for Service Accounts configurado
+## Variaveis Terraform
 
-### Networking
+Arquivo: `terraform/environments/production/variables.tf`
 
-- **VPC Integration**: Utiliza VPC existente (AWS Academy)
-- **Multi-AZ Subnets**: Subnets em us-east-1a e us-east-1b
-- **Security Groups**: Controle granular de acesso
-  - EKS Security Group (nodes e control plane)
-  - NLB Security Group (load balancer)
-  - RDS Security Group (banco de dados)
-- **Network Load Balancer**: Roteamento de tráfego externo para NodePort
+| Variavel | Tipo | Padrao | Descricao |
+|---|---|---|---|
+| `aws_region` | string | `us-east-1` | Regiao AWS |
+| `project_name` | string | `EKS-OFICINA-TECH` | Nome do projeto (prefixo de todos os recursos) |
+| `environment` | string | `production` | Ambiente |
+| `eks_cluster_version` | string | `1.31` | Versao do Kubernetes |
+| `access_config` | string | `API_AND_CONFIG_MAP` | Modo de autenticacao do EKS |
+| `node_group` | string | `oficina_tech` | Nome do node group |
+| `instance_type` | string | `t3.medium` | Tipo de instancia dos nodes |
+| `node_desired_size` | number | `2` | Nodes desejados |
+| `node_max_size` | number | `3` | Nodes maximos |
+| `node_min_size` | number | `1` | Nodes minimos |
+| `lab_role` | string | `""` | ARN da LabRole AWS Academy |
+| `principal_arn` | string | `""` | ARN adicional para acesso ao cluster |
+| `policy_arn` | string | `arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy` | Policy de acesso ao EKS |
+| `additional_users` | list(object) | `[]` | Usuarios IAM adicionais para aws-auth |
+| `additional_roles` | list(object) | `[]` | Roles IAM adicionais para aws-auth |
+| `datadog_api_key` | string (sensitive) | `""` | API key Datadog (modulo so e instanciado se nao vazio) |
+| `datadog_app_key` | string (sensitive) | `""` | App key Datadog |
+| `datadog_api_url` | string | `https://api.datadoghq.com/` | URL da API Datadog |
+| `cost_center` | string | `engineering` | Tag FinOps — centro de custo |
+| `business_unit` | string | `technology` | Tag FinOps — unidade de negocio |
+| `owner` | string | `devops-team` | Tag FinOps — responsavel |
+| `application` | string | `oficina-tech` | Tag FinOps — aplicacao |
+| `microservice` | string | `shared` | Tag FinOps — microsservico |
 
-### Load Balancing
+---
 
-- **Network Load Balancer (NLB)**:
-  - Listener TCP:80 para tráfego HTTP
-  - Target Group apontando para NodePort 30080
-  - Health checks configurados
-  - Multi-AZ para alta disponibilidade
-- **AWS Load Balancer Controller**:
-  - Gerencia Application Load Balancers via Ingress
-  - Integração com EKS via Helm
-  - IRSA para permissões AWS
+## Outputs Terraform
 
-### Certificados e TLS
+Arquivo: `terraform/environments/production/outputs.tf`
 
-- **cert-manager**: Gerenciamento automático de certificados TLS
-- **Let's Encrypt**: Integração para certificados gratuitos
-- **Auto-renewal**: Renovação automática de certificados
+Estes outputs sao consumidos por outros repos via `terraform_remote_state`. Nunca renomear sem coordenar com `oficina-tech-db` e `oficina-tech-api-gateway`.
 
-### IAM e Segurança
+| Output | Sensitive | Consumido por | Descricao |
+|---|---|---|---|
+| `eks_cluster_name` | nao | api-gateway, db | Nome do cluster EKS |
+| `eks_cluster_endpoint` | sim | api-gateway | Endpoint do cluster |
+| `eks_cluster_arn` | nao | — | ARN do cluster |
+| `eks_cluster_certificate_authority` | sim | api-gateway | Certificado CA |
+| `eks_cluster_version` | nao | — | Versao do Kubernetes em uso |
+| `eks_access_entries` | nao | — | Lista de access entries configuradas |
+| `vpc_id` | nao | db, api-gateway | ID da VPC |
+| `vpc_cidr_block` | nao | db | CIDR da VPC |
+| `subnet_ids` | nao | db, api-gateway | IDs das subnets filtradas |
+| `eks_security_group_id` | nao | db | SG do modulo security-groups |
+| `eks_cluster_security_group_id` | nao | db | SG auto-criado pelo EKS |
+| `nlb_dns_name` | nao | api-gateway | DNS do NLB |
+| `nlb_arn` | nao | api-gateway | ARN do NLB |
+| `nlb_zone_id` | nao | api-gateway | Zone ID do NLB para Route53 |
+| `aws_region` | nao | todos | Regiao AWS |
+| `aws_account_id` | nao | — | ID da conta AWS |
+| `sqs_customer_deleted_url` | nao | ms1, ms2 | URL da fila customer-deleted |
+| `sqs_inventory_op_requested_url` | nao | ms2, ms3 | URL da fila inventory-op-requested |
+| `sqs_inventory_op_succeeded_url` | nao | ms2, ms3 | URL da fila inventory-op-succeeded |
+| `sqs_inventory_op_failed_url` | nao | ms2, ms3 | URL da fila inventory-op-failed |
+| `github_secrets_json` | sim | CI/CD | JSON com todos os valores para GitHub Secrets |
+| `current_caller_info` | nao | — | Debug: ARN/usuario que executou o Terraform |
+| `aws_auth_configmap_command` | nao | — | Comando para aplicar o ConfigMap aws-auth |
 
-- **LabRole Integration**: Compatibilidade com AWS Academy
-- **OIDC Provider**: Federação para IRSA
-- **Access Entries**: Controle de acesso ao cluster
-- **RBAC**: Roles e bindings Kubernetes
-- **Service Accounts**: Contas de serviço com permissões específicas
+---
 
-### Monitoramento e Observabilidade
-
-- **CloudWatch Integration**: Logs e métricas do cluster
-- **EKS Control Plane Logs**: Logs do API server, audit, etc
-- **Node Metrics**: Métricas de CPU, memória, disco
-- **Application Logs**: Logs dos pods e containers
-
-### CI/CD
-
-- **Validação Automática**: Terraform validate, format check
-- **Security Scanning**: tfsec e Checkov para vulnerabilidades
-- **Terraform Plan**: Preview de mudanças em PRs
-- **Deploy Automatizado**: Apply automático na branch main
-- **Health Checks**: Verificação pós-deploy
-- **Release Management**: Versionamento automático com tags
-
-### FinOps e Tagging
-
-- **Cost Center**: Tags para rastreamento de custos
-- **Business Unit**: Organização por unidade de negócio
-- **Environment**: Separação por ambiente (prod, staging, dev)
-- **Owner**: Responsável pelos recursos
-- **Application**: Nome da aplicação
-- **Microservice**: Identificação de microserviços
-
-## Tecnologias Usadas
-
-- **Terraform** (>= 1.7.0): Infraestrutura como código
-- **AWS EKS**: Kubernetes gerenciado (v1.31)
-- **AWS VPC**: Networking e subnets
-- **AWS NLB**: Network Load Balancer
-- **AWS IAM**: Gerenciamento de identidade e acesso
-- **Helm**: Gerenciador de pacotes Kubernetes
-- **kubectl**: CLI do Kubernetes
-- **GitHub Actions**: CI/CD pipelines
-
-### Recursos AWS
-
-- AWS EKS (Elastic Kubernetes Service)
-- AWS EC2 (instâncias dos nodes)
-- AWS Auto Scaling Groups
-- AWS VPC (Virtual Private Cloud)
-- AWS NLB (Network Load Balancer)
-- AWS IAM (Roles, Policies, OIDC Provider)
-- AWS CloudWatch (Logs e Métricas)
-- AWS S3 (Terraform state backend)
-
-### Helm Charts
-
-- AWS Load Balancer Controller (v2.x)
-- cert-manager (v1.x)
-
-## Como Rodar o Projeto
-
-### Pré-requisitos
-
-- [Terraform](https://www.terraform.io/downloads) >= 1.7.0
-- [AWS CLI](https://aws.amazon.com/cli/) configurado
-- [kubectl](https://kubernetes.io/docs/tasks/tools/) >= 1.31
-- [Helm](https://helm.sh/docs/intro/install/) >= 3.x
-- Credenciais AWS com permissões adequadas
-- Acesso ao S3 bucket para Terraform state
-
-### Configuração Inicial
-
-1. Clone o repositório:
-
-```bash
-git clone <repository-url>
-cd oficina-tech-infra
-```
-
-2. Configure as credenciais AWS:
-
-```bash
-aws configure
-```
-
-3. Navegue para o ambiente desejado:
-
-```bash
-cd terraform/environments/production
-```
-
-4. Crie um arquivo de variáveis (opcional):
-
-```bash
-cp terraform.tfvars.example terraform.tfvars
-```
-
-5. Edite as variáveis conforme necessário:
+## Remote State
 
 ```hcl
-# terraform.tfvars
-project_name         = "EKS-OFICINA-TECH"
-eks_cluster_version  = "1.31"
-instance_type        = "t3.medium"
-node_desired_size    = 1
-node_max_size        = 2
-node_min_size        = 1
-
-# FinOps Tags
-cost_center    = "engineering"
-business_unit  = "technology"
-environment    = "production"
-owner          = "devops-team"
-application    = "oficina-tech"
+# terraform/environments/production/backend.tf
+terraform {
+  backend "s3" {
+    key = "fiap/infra/terraform.tfstate"
+    # bucket fornecido em runtime via -backend-config ou variavel TF_STATE_BUCKET
+    # bucket padrao usado pelo CI: fiap-soat-tf-backend-oficina-tech
+  }
+}
 ```
 
-### Deploy da Infraestrutura
+Outros repos consomem este state assim:
 
-#### Usando Terraform Diretamente
-
-```bash
-# 1. Inicializar Terraform
-terraform init
-
-# 2. Validar configuração
-terraform validate
-
-# 3. Formatar código
-terraform fmt -recursive
-
-# 4. Planejar mudanças
-terraform plan -out=tfplan
-
-# 5. Aplicar mudanças
-terraform apply tfplan
-
-# 6. Ver outputs
-terraform output
+```hcl
+data "terraform_remote_state" "main" {
+  backend = "s3"
+  config = {
+    bucket = var.tf_state_bucket          # ex: fiap-soat-tf-backend-oficina-tech
+    key    = "fiap/infra/terraform.tfstate"
+    region = "us-east-1"
+  }
+}
 ```
 
-#### Deploy Completo Passo a Passo
+**Sem DynamoDB lock** — nao executar `terraform apply` em paralelo neste repo.
+
+---
+
+## Como fazer deploy
+
+### Pre-requisitos
+
+- Terraform >= 1.7.0
+- AWS CLI configurado com credenciais validas
+- kubectl >= 1.31
+- Acesso de leitura/escrita ao bucket S3 do state
+
+### Deploy manual
 
 ```bash
-# Navegar para o ambiente
 cd terraform/environments/production
 
-# Inicializar
-terraform init
+# Inicializar backend (informar o bucket S3)
+terraform init -backend-config="bucket=fiap-soat-tf-backend-oficina-tech" \
+               -backend-config="region=us-east-1"
 
-# Planejar
-terraform plan
+# Visualizar mudancas
+terraform plan -var="db_password=<senha>"
 
-# Aplicar (com aprovação manual)
-terraform apply
+# Aplicar
+terraform apply -var="db_password=<senha>"
 
-# Ou aplicar automaticamente
-terraform apply -auto-approve
-```
-
-### Configurar kubectl
-
-Após o deploy do cluster EKS:
-
-```bash
-# Obter nome do cluster
-CLUSTER_NAME=$(terraform output -raw eks_cluster_name)
-
-# Atualizar kubeconfig
-aws eks update-kubeconfig \
-  --name $CLUSTER_NAME \
-  --region us-east-1
-
-# Verificar conectividade
-kubectl get nodes
-
-# Ver pods do sistema
-kubectl get pods -n kube-system
-```
-
-### Aplicar Recursos Kubernetes
-
-```bash
-# Aplicar ConfigMap de autenticação
-kubectl apply -f ../../k8s/aws-auth-configmap.yaml
-
-# Aplicar RBAC (se existir)
-kubectl apply -f ../../k8s/rbac/
-```
-
-### Verificar Componentes
-
-```bash
-# Verificar nodes
-kubectl get nodes
-
-# Verificar AWS Load Balancer Controller
-kubectl get deployment -n kube-system aws-load-balancer-controller
-
-# Verificar cert-manager
-kubectl get pods -n cert-manager
-
-# Verificar CRDs
-kubectl get crd | grep elbv2
-kubectl get crd | grep cert-manager
-```
-
-### Obter Informações da Infraestrutura
-
-```bash
-# Ver todos os outputs
+# Ver outputs
 terraform output
-
-# Outputs específicos
-terraform output eks_cluster_name
-terraform output eks_cluster_endpoint
-terraform output nlb_dns_name
-terraform output vpc_id
-terraform output eks_security_group_id
-
-# JSON formatado para GitHub Secrets
-terraform output -json github_secrets_json
 ```
 
-### CI/CD via GitHub Actions
-
-O projeto possui pipelines automatizados:
-
-#### CI Workflow (Pull Requests)
-
-Executado em PRs para develop ou main:
-
-- Validação do Terraform (format, validate)
-- Security scan (tfsec, Checkov)
-- Terraform plan com comentário no PR
-- Verificação de estrutura de arquivos
-
-#### Deploy Workflow (Push para main)
-
-Executado automaticamente ao fazer push para main:
-
-- Terraform apply
-- Atualização do kubeconfig
-- Aplicação de recursos Kubernetes
-- Health checks pós-deploy
-- Finalização de release
-
-#### Destroy Workflow (Manual)
-
-Workflow manual para destruir recursos:
-
-- Remoção de recursos Kubernetes
-- Terraform destroy
-- Limpeza de state
-
-#### Release Workflow (Manual)
-
-Workflow para criar releases:
-
-- Criação de tags RC
-- Geração de changelog
-- Criação de GitHub Release
-
-### Secrets Necessários no GitHub
-
-Configure os seguintes secrets no repositório:
-
-- `AWS_ACCESS_KEY_ID`: Access key da AWS
-- `AWS_SECRET_ACCESS_KEY`: Secret key da AWS
-- `AWS_SESSION_TOKEN`: Session token (AWS Academy)
-
-### Variáveis de Ambiente
-
-As principais variáveis configuráveis:
-
-#### Cluster EKS
-
-- `project_name`: Nome do projeto (padrão: "EKS-OFICINA-TECH")
-- `eks_cluster_version`: Versão do Kubernetes (padrão: "1.31")
-- `access_config`: Modo de autenticação (API, CONFIG_MAP, API_AND_CONFIG_MAP)
-
-#### Node Group
-
-- `node_group`: Nome do node group (padrão: "oficina_tech")
-- `instance_type`: Tipo de instância (padrão: "t3.medium")
-- `node_desired_size`: Número desejado de nodes (padrão: 1)
-- `node_max_size`: Número máximo de nodes (padrão: 2)
-- `node_min_size`: Número mínimo de nodes (padrão: 1)
-
-#### AWS Academy
-
-- `lab_role`: ARN da LabRole (opcional)
-- `principal_arn`: ARN do principal para acesso (opcional)
-
-#### FinOps Tags
-
-- `cost_center`: Centro de custo
-- `business_unit`: Unidade de negócio
-- `environment`: Ambiente (production, staging, development)
-- `owner`: Responsável
-- `application`: Nome da aplicação
-- `microservice`: Nome do microserviço
-
-## Arquitetura
-
-### Diagrama de Componentes
-
-```
-┌─────────────────┐
-│  External       │
-│  Users          │
-└────────┬────────┘
-         │ HTTP :80
-         ▼
-┌─────────────────────────────────────┐
-│  Network Load Balancer (Multi-AZ)   │
-│  • TCP:80 → NodePort:30080          │
-│  • Health checks: /health           │
-└────────┬────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────┐
-│  EKS Cluster v1.31                  │
-│  ┌───────────────────────────────┐  │
-│  │  Control Plane (Managed)      │  │
-│  └───────────────────────────────┘  │
-│  ┌───────────────────────────────┐  │
-│  │  Node Group (Auto Scaling)    │  │
-│  │  • t3.medium instances        │  │
-│  │  • Multi-AZ (1a, 1b)         │  │
-│  │  • Min: 1, Max: 2            │  │
-│  └───────────────────────────────┘  │
-│  ┌───────────────────────────────┐  │
-│  │  AWS Load Balancer Controller │  │
-│  │  • Manages ALB/NLB           │  │
-│  │  • IRSA enabled              │  │
-│  └───────────────────────────────┘  │
-│  ┌───────────────────────────────┐  │
-│  │  cert-manager                 │  │
-│  │  • TLS certificates          │  │
-│  │  • Auto-renewal              │  │
-│  └───────────────────────────────┘  │
-└─────────────────────────────────────┘
-```
-
-### Fluxo de Tráfego
-
-1. Usuário faz requisição HTTP para o NLB
-2. NLB roteia para NodePort 30080 nos nodes do EKS
-3. Kubernetes Service roteia para os pods da aplicação
-4. Aplicação processa e retorna resposta
-
-### Autenticação e Acesso
-
-1. **EKS Access Entries**: Autenticação moderna via API
-2. **aws-auth ConfigMap**: Suporte legado para compatibilidade
-3. **RBAC**: Roles e bindings Kubernetes
-4. **IRSA**: Service accounts com permissões AWS
-
-## Monitoramento
-
-### CloudWatch Logs
+### Configurar kubectl apos o deploy
 
 ```bash
-# Ver logs do control plane
-aws logs tail /aws/eks/EKS-OFICINA-TECH/cluster --follow
-
-# Ver logs de um node específico
-kubectl logs -n kube-system <pod-name>
-```
-
-### Métricas do Cluster
-
-```bash
-# Ver uso de recursos dos nodes
-kubectl top nodes
-
-# Ver uso de recursos dos pods
-kubectl top pods -A
-
-# Descrever node
-kubectl describe node <node-name>
-```
-
-### Health Checks
-
-```bash
-# Verificar saúde do cluster
-aws eks describe-cluster \
-  --name EKS-OFICINA-TECH \
-  --query 'cluster.status'
-
-# Verificar nodes
+CLUSTER=$(terraform output -raw eks_cluster_name)
+aws eks update-kubeconfig --name "$CLUSTER" --region us-east-1
 kubectl get nodes
-
-# Verificar componentes do sistema
-kubectl get pods -n kube-system
-
-# Verificar NLB
-aws elbv2 describe-load-balancers \
-  --names EKS-OFICINA-TECH-nlb
 ```
 
-## Troubleshooting
+---
 
-### Cluster não Acessível
+## CI/CD
 
-```bash
-# Verificar status do cluster
-aws eks describe-cluster --name EKS-OFICINA-TECH
+O pipeline e composto por 4 workflows:
 
-# Atualizar kubeconfig
-aws eks update-kubeconfig --name EKS-OFICINA-TECH --region us-east-1
+### `ci.yml` — Validacao (PRs para `develop` e `main`)
 
-# Verificar credenciais
-aws sts get-caller-identity
-```
+Etapas executadas em sequencia:
 
-### Nodes não Aparecem
+1. **Validate** — `terraform validate` + verificacao de estrutura de arquivos
+2. **Security Scan** (paralelo ao Plan) — tfsec e Checkov; resultado publicado na aba Security
+3. **Terraform Plan** (somente em PRs) — executa `terraform plan`, faz upload do artefato `tfplan-<sha>` e posta comentario colapsavel no PR
 
-```bash
-# Verificar node group
-aws eks describe-nodegroup \
-  --cluster-name EKS-OFICINA-TECH \
-  --nodegroup-name oficina_tech
+### `deploy.yml` — Deploy automatizado
 
-# Verificar Auto Scaling Group
-aws autoscaling describe-auto-scaling-groups \
-  --query 'AutoScalingGroups[?contains(Tags[?Key==`eks:cluster-name`].Value, `EKS-OFICINA-TECH`)]'
+Disparado quando um PR `release/*` e mergeado na `main` ou via `workflow_dispatch`.
 
-# Ver logs do node
-kubectl logs -n kube-system -l k8s-app=aws-node
-```
+1. Reusa o artefato `tfplan` gerado no CI (mesmo SHA do commit)
+2. Executa `terraform apply -auto-approve tfplan`
+3. Executa health check pos-deploy via `kubectl` e HTTP GET em `/health`
+4. Cria a tag de release somente apos o health check passar
+5. Em `workflow_dispatch`, nao cria nova tag (redeploy de versao existente)
 
-### AWS Load Balancer Controller não Funciona
+### `release.yml` — Versionamento
 
-```bash
-# Verificar deployment
-kubectl get deployment -n kube-system aws-load-balancer-controller
+Cria PR `release/<versao>` com versao calculada via Conventional Commits (`feat:` → minor, `feat!:` → major, demais → patch).
 
-# Ver logs
-kubectl logs -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller
+### `rollback.yml` — Rollback
 
-# Verificar CRDs
-kubectl get crd | grep elbv2
+Redeploya uma tag anterior sem criar nova tag.
 
-# Verificar service account e IRSA
-kubectl describe sa -n kube-system aws-load-balancer-controller
-```
+#### Secrets necessarios no GitHub
 
-### Terraform Apply Falha
+| Secret | Descricao |
+|---|---|
+| `AWS_ACCESS_KEY_ID` | Access key da AWS |
+| `AWS_SECRET_ACCESS_KEY` | Secret key da AWS |
+| `AWS_SESSION_TOKEN` | Session token (AWS Academy) |
+| `DB_PASSWORD` | Senha do banco (passada como `TF_VAR_db_password`) |
+| `DD_API_KEY` | Datadog API key (opcional) |
+| `DD_APP_KEY` | Datadog App key (opcional) |
 
-```bash
-# Limpar state local
-rm -rf .terraform terraform.tfstate*
+#### Variaveis de repositorio
 
-# Reinicializar
-terraform init -reconfigure
+| Variavel | Padrao | Descricao |
+|---|---|---|
+| `AWS_REGION` | `us-east-1` | Regiao AWS |
+| `TF_VERSION` | `1.7.0` | Versao do Terraform |
+| `TF_WORKING_DIR` | `terraform/environments/production` | Diretorio raiz do Terraform |
+| `TF_STATE_BUCKET` | `fiap-soat-tf-backend-oficina-tech` | Bucket S3 do state |
+| `K8S_NAMESPACE` | `app-oficina-tech` | Namespace Kubernetes |
 
-# Validar
-terraform validate
+---
 
-# Tentar novamente
-terraform plan
-terraform apply
-```
+## Nota importante — apply paralelo
 
-### Problemas de Permissão
-
-```bash
-
-# Verificar access entries
-aws eks list-access-entries --cluster-name EKS-OFICINA-TECH
-
-# Verificar aws-auth ConfigMap
-kubectl get configmap -n kube-system aws-auth -o yaml
-
-# Adicionar usuário manualmente
-kubectl edit configmap -n kube-system aws-auth
-```
-
-## Documentação Adicional
-
-- [Diagrama de Arquitetura](docs/infrastructure-component-diagram.puml): Diagrama completo da infraestrutura
-- [AWS EKS Documentation](https://docs.aws.amazon.com/eks/): Documentação oficial do EKS
-- [Terraform AWS Provider](https://registry.terraform.io/providers/hashicorp/aws/latest/docs): Documentação do provider
-- [AWS Load Balancer Controller](https://kubernetes-sigs.github.io/aws-load-balancer-controller/): Documentação do controller
-
-## Segurança
-
-### Boas Práticas Implementadas
-
-- Security groups restritivos
-- IRSA para permissões granulares
-- Access entries para controle de acesso
-- Encryption at rest (EBS volumes)
-- Private subnets para nodes
-- Network policies (recomendado implementar)
-
-### Recomendações para Produção
-
-- Habilitar encryption de secrets no EKS
-- Implementar Pod Security Standards
-- Configurar Network Policies
-- Habilitar audit logs
-- Usar AWS Secrets Manager para secrets
-- Implementar backup e disaster recovery
-- Configurar alertas no CloudWatch
-- Implementar WAF para proteção adicional
-
-## Manutenção
-
-### Atualização do Cluster
-
-```bash
-# Verificar versão atual
-kubectl version --short
-
-# Atualizar versão no Terraform
-# Editar variables.tf: eks_cluster_version = "1.32"
-
-# Aplicar mudança
-terraform plan
-terraform apply
-```
-
-### Scaling de Nodes
-
-```bash
-# Via Terraform
-# Editar variables.tf: node_desired_size, node_max_size, node_min_size
-terraform apply
-
-# Via AWS CLI
-aws eks update-nodegroup-config \
-  --cluster-name EKS-OFICINA-TECH \
-  --nodegroup-name oficina_tech \
-  --scaling-config desiredSize=3,minSize=2,maxSize=4
-```
-
-### Backup e Restore
-
-```bash
-# Backup do state
-aws s3 cp s3://fiap-soat-tf-backend-bispo-730335587750/fiap/eks/terraform.tfstate ./backup/
-
-# Backup de recursos Kubernetes
-kubectl get all -A -o yaml > backup/k8s-resources.yaml
-```
-
-## Custos
-
-### Recursos Principais
-
-- EKS Control Plane: ~$0.10/hora (~$73/mês)
-- EC2 Nodes (t3.medium): ~$0.0416/hora por node
-- NLB: ~$0.0225/hora + data processing
-- EBS Volumes: ~$0.10/GB-mês
-- Data Transfer: Variável
-
-### Otimização de Custos
-
-- Use Spot Instances para nodes (não críticos)
-- Configure auto-scaling adequadamente
-- Monitore recursos não utilizados
-- Use tags FinOps para rastreamento
-- Revise regularmente o tamanho das instâncias
-
-## Licença
-
-Este projeto faz parte do sistema Oficina Tech.
+Este repositorio **nao usa DynamoDB para lock de state**. Executar `terraform apply` simultaneamente em duas maquinas diferentes causara corrupcao do state. Certifique-se de que apenas um apply esteja em execucao por vez. O workflow `deploy.yml` usa `concurrency: group: deploy` com `cancel-in-progress: false` para garantir isso no CI.
