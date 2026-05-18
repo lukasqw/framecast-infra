@@ -74,18 +74,6 @@ jobs:
             -backend-config="bucket=$TF_BACKEND_BUCKET" \
             -backend-config="region=$TF_BACKEND_REGION"
 
-      - name: Delete Kubernetes Resources
-        continue-on-error: true
-        run: |
-          EKS_CLUSTER=$(cd "${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}" \
-            && terraform output -raw eks_cluster_name 2>/dev/null || echo "")
-
-          if [ -n "$EKS_CLUSTER" ]; then
-            aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "${{ env.AWS_REGION }}"
-            kubectl delete all --all -n ${{ vars.K8S_NAMESPACE || 'app-oficina-tech' }} --ignore-not-found=true || true
-            kubectl delete namespace ${{ vars.K8S_NAMESPACE || 'app-oficina-tech' }} --ignore-not-found=true || true
-          fi
-
       - name: Scale Down Node Group to Zero
         continue-on-error: true
         run: |
@@ -114,18 +102,20 @@ jobs:
             --scaling-config minSize=0,maxSize=0,desiredSize=0 \
             --region "${{ env.AWS_REGION }}" || true
 
-          echo "Aguardando EC2 terminarem (até 8 min para o CNI limpar as ENIs)..."
-          for i in $(seq 1 16); do
+          echo "Aguardando EC2 terminarem completamente (até 10 min)..."
+          for i in $(seq 1 20); do
             NODES=$(aws ec2 describe-instances \
               --filters \
                 "Name=tag:eks:cluster-name,Values=$EKS_CLUSTER" \
-                "Name=instance-state-name,Values=running,pending" \
+                "Name=instance-state-name,Values=running,pending,stopping,shutting-down" \
               --query 'length(Reservations[].Instances[])' \
               --output text --region "${{ env.AWS_REGION }}" 2>/dev/null || echo "0")
-            echo "Nodes ainda rodando: $NODES"
+            echo "Nodes ainda ativos: $NODES"
             [ "$NODES" = "0" ] && break
             sleep 30
           done
+          echo "Aguardando 30s para o CNI liberar ENIs..."
+          sleep 30
 
       - name: Delete Orphaned ENIs
         continue-on-error: true
@@ -168,6 +158,18 @@ jobs:
               --network-interface-id "$ENI" \
               --region "${{ env.AWS_REGION }}" || true
           done
+
+      - name: Delete Kubernetes Resources
+        continue-on-error: true
+        run: |
+          EKS_CLUSTER=$(cd "${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}" \
+            && terraform output -raw eks_cluster_name 2>/dev/null || echo "")
+
+          if [ -n "$EKS_CLUSTER" ]; then
+            aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "${{ env.AWS_REGION }}"
+            kubectl delete all --all -n ${{ vars.K8S_NAMESPACE || 'app-oficina-tech' }} --ignore-not-found=true || true
+            kubectl delete namespace ${{ vars.K8S_NAMESPACE || 'app-oficina-tech' }} --ignore-not-found=true || true
+          fi
 
       - name: Terraform Destroy
         working-directory: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
