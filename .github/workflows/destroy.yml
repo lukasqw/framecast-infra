@@ -87,59 +87,14 @@ jobs:
             echo "Nenhum cluster no state — possivelmente já destruído."
           fi
 
-      - name: Delete Kubernetes Resources
-        if: steps.eks.outputs.cluster_name != ''
+      - name: Terraform Destroy (1ª passagem)
+        id: destroy_first
         continue-on-error: true
-        env:
-          EKS_CLUSTER: ${{ steps.eks.outputs.cluster_name }}
-        run: |
-          aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "$AWS_REGION" || exit 0
-          NAMESPACE="${{ vars.K8S_NAMESPACE || 'app-oficina-tech' }}"
-          kubectl delete all --all -n "$NAMESPACE" --ignore-not-found=true 2>/dev/null || true
-          kubectl delete namespace "$NAMESPACE" --ignore-not-found=true 2>/dev/null || true
-          echo "Aguardando 30s para o CCM remover ELBs provisionados pelo K8s..."
-          sleep 30
-
-      - name: Scale Down Node Group to Zero
-        if: steps.eks.outputs.cluster_name != ''
-        continue-on-error: true
-        env:
-          EKS_CLUSTER: ${{ steps.eks.outputs.cluster_name }}
-        run: |
-          NODE_GROUP=$(aws eks list-nodegroups \
-            --cluster-name "$EKS_CLUSTER" \
-            --region "$AWS_REGION" \
-            --query 'nodegroups[0]' --output text 2>/dev/null || echo "")
-
-          if [ -z "$NODE_GROUP" ] || [ "$NODE_GROUP" = "None" ]; then
-            echo "Node group não encontrado — pulando scale-down."
-            exit 0
-          fi
-
-          echo "Escalando $NODE_GROUP para 0..."
-          aws eks update-nodegroup-config \
-            --cluster-name "$EKS_CLUSTER" \
-            --nodegroup-name "$NODE_GROUP" \
-            --scaling-config minSize=0,maxSize=0,desiredSize=0 \
-            --region "$AWS_REGION" || true
-
-          echo "Aguardando instâncias EC2 terminarem (até 10 min)..."
-          for i in $(seq 1 20); do
-            NODES=$(aws ec2 describe-instances \
-              --filters \
-                "Name=tag:eks:cluster-name,Values=$EKS_CLUSTER" \
-                "Name=instance-state-name,Values=running,pending,stopping,shutting-down" \
-              --query 'length(Reservations[].Instances[])' \
-              --output text --region "$AWS_REGION" 2>/dev/null || echo "0")
-            echo "  Nodes ativos: $NODES (tentativa $i/20)"
-            [ "$NODES" = "0" ] && break
-            sleep 30
-          done
-          echo "Aguardando 60s para VPC CNI liberar ENIs..."
-          sleep 60
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform destroy -auto-approve
 
       - name: Delete Orphaned ENIs
-        if: steps.eks.outputs.cluster_name != ''
+        if: steps.destroy_first.outcome == 'failure' && steps.eks.outputs.cluster_name != ''
         continue-on-error: true
         env:
           EKS_CLUSTER: ${{ steps.eks.outputs.cluster_name }}
@@ -175,13 +130,7 @@ jobs:
               --region "$AWS_REGION" || true
           done
 
-      - name: Terraform Destroy
+      - name: Terraform Destroy (2ª passagem)
+        if: steps.destroy_first.outcome == 'failure'
         working-directory: ${{ env.TF_DIR }}
-        run: |
-          echo "=== Terraform destroy — tentativa 1 ==="
-          if ! terraform destroy -auto-approve; then
-            echo "::warning::Primeira passagem falhou — aguardando 30s e tentando novamente..."
-            sleep 30
-            echo "=== Terraform destroy — tentativa 2 ==="
-            terraform destroy -auto-approve
-          fi
+        run: terraform destroy -auto-approve
