@@ -122,6 +122,7 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working_dir }}
       env:
+        TF_VAR_db_password: ${{ inputs.db_password }}
         TF_VAR_datadog_api_key: ${{ inputs.dd_api_key }}
         TF_VAR_datadog_app_key: ${{ inputs.dd_app_key }}
         TF_VAR_datadog_api_url: ${{ inputs.dd_api_url }}
@@ -131,37 +132,36 @@ runs:
           echo "::notice::Datadog credentials ausentes — pulando import de monitors"
           exit 0
         fi
-        if terraform state list 2>/dev/null | grep -q "datadog_monitor"; then
-          echo "::notice::Monitors Datadog já estão no state — nada a importar"
-          exit 0
-        fi
-        echo "::notice::Monitors não encontrados no state — buscando na API do Datadog..."
-        DD_API_URL="${TF_VAR_datadog_api_url:-https://api.datadoghq.com}"
-        MONITORS_JSON=$(curl -sf \
-          -H "DD-API-KEY: $TF_VAR_datadog_api_key" \
-          -H "DD-APPLICATION-KEY: $TF_VAR_datadog_app_key" \
-          "$DD_API_URL/api/v1/monitors?tags=service:oficina-tech" || echo "[]")
-        declare -A MONITOR_MAP
-        MONITOR_MAP["[oficina-tech] High API Latency (p95)"]="module.datadog[0].datadog_monitor.high_api_latency"
-        MONITOR_MAP["[oficina-tech] Service Order Processing Failures"]="module.datadog[0].datadog_monitor.service_order_failures"
-        MONITOR_MAP["[oficina-tech] High Pod Restart Rate"]="module.datadog[0].datadog_monitor.pod_restarts"
-        MONITOR_MAP["[oficina-tech] High 5xx Error Rate"]="module.datadog[0].datadog_monitor.high_error_rate"
-        MONITOR_MAP["[oficina-tech] High CPU Usage"]="module.datadog[0].datadog_monitor.high_cpu"
-        MONITOR_MAP["[oficina-tech] High Memory Usage"]="module.datadog[0].datadog_monitor.high_memory"
-        MONITOR_MAP["[oficina-tech] Service Order Processing Errors"]="module.datadog[0].datadog_monitor.service_order_processing_errors"
-        MONITOR_MAP["[oficina-tech] Service Order Failure Rate"]="module.datadog[0].datadog_monitor.service_order_failure_rate"
-        MONITOR_MAP["[oficina-tech] Service Order Stuck in Status"]="module.datadog[0].datadog_monitor.service_order_stuck"
-        MONITOR_MAP["[oficina-tech] Service Order Creation Drop"]="module.datadog[0].datadog_monitor.service_order_creation_drop"
+
+        # IDs estáveis — atualize se os monitors forem deletados e recriados no Datadog
+        declare -A MONITORS
+        MONITORS["module.datadog[0].datadog_monitor.high_api_latency"]="283667600"
+        MONITORS["module.datadog[0].datadog_monitor.service_order_failures"]="283667611"
+        MONITORS["module.datadog[0].datadog_monitor.pod_restarts"]="283667608"
+        MONITORS["module.datadog[0].datadog_monitor.high_error_rate"]="283667601"
+        MONITORS["module.datadog[0].datadog_monitor.high_cpu"]="283667604"
+        MONITORS["module.datadog[0].datadog_monitor.high_memory"]="283667602"
+        MONITORS["module.datadog[0].datadog_monitor.service_order_processing_errors"]="283667606"
+        MONITORS["module.datadog[0].datadog_monitor.service_order_failure_rate"]="283667603"
+        MONITORS["module.datadog[0].datadog_monitor.service_order_stuck"]="283667605"
+        MONITORS["module.datadog[0].datadog_monitor.service_order_creation_drop"]="283667599"
+
         IMPORTED=0
-        while IFS=$'\t' read -r id name; do
-          addr="${MONITOR_MAP[$name]}"
-          if [ -n "$addr" ]; then
-            echo "::notice::Importando '$name' (id=$id) → $addr"
-            terraform import "$addr" "$id" || true
-            IMPORTED=$((IMPORTED + 1))
+        for addr in "${!MONITORS[@]}"; do
+          id="${MONITORS[$addr]}"
+          if terraform state show "$addr" > /dev/null 2>&1; then
+            echo "::notice::$addr já está no state — pulando"
+          else
+            echo "::notice::Importando $addr (id=$id)"
+            if terraform import "$addr" "$id"; then
+              IMPORTED=$((IMPORTED + 1))
+            else
+              echo "::error::Falha ao importar $addr (id=$id)"
+            fi
           fi
-        done < <(echo "$MONITORS_JSON" | jq -r '.[] | [.id, .name] | @tsv')
-        echo "::notice::$IMPORTED monitor(s) importado(s) do Datadog"
+        done
+
+        echo "::notice::$IMPORTED monitor(s) importado(s)"
         if [ "$IMPORTED" -gt 0 ]; then
           echo "state_changed=true" >> $GITHUB_OUTPUT
         fi
