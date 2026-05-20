@@ -132,6 +132,50 @@ runs:
       run: |
         echo "::warning::CI plan artifact 'tfplan-${{ inputs.plan_sha }}' was not found (expired or unavailable). A fresh plan will be generated — this plan was NOT reviewed in the PR."
 
+    - name: Import Orphaned Datadog Monitors
+      shell: bash
+      working-directory: ${{ inputs.working_dir }}
+      env:
+        TF_VAR_datadog_api_key: ${{ inputs.dd_api_key }}
+        TF_VAR_datadog_app_key: ${{ inputs.dd_app_key }}
+        TF_VAR_datadog_api_url: ${{ inputs.dd_api_url }}
+      run: |
+        if [ -z "$TF_VAR_datadog_api_key" ] || [ -z "$TF_VAR_datadog_app_key" ]; then
+          echo "::notice::Datadog credentials ausentes — pulando import de monitors"
+          exit 0
+        fi
+        if terraform state list 2>/dev/null | grep -q "datadog_monitor"; then
+          echo "::notice::Monitors Datadog já estão no state — nada a importar"
+          exit 0
+        fi
+        echo "::notice::Monitors não encontrados no state — buscando na API do Datadog..."
+        DD_API_URL="${TF_VAR_datadog_api_url:-https://api.datadoghq.com}"
+        MONITORS_JSON=$(curl -sf \
+          -H "DD-API-KEY: $TF_VAR_datadog_api_key" \
+          -H "DD-APPLICATION-KEY: $TF_VAR_datadog_app_key" \
+          "$DD_API_URL/api/v1/monitors?tags=service:oficina-tech" || echo "[]")
+        declare -A MONITOR_MAP
+        MONITOR_MAP["[oficina-tech] High API Latency (p95)"]="module.datadog[0].datadog_monitor.high_api_latency"
+        MONITOR_MAP["[oficina-tech] Service Order Processing Failures"]="module.datadog[0].datadog_monitor.service_order_failures"
+        MONITOR_MAP["[oficina-tech] High Pod Restart Rate"]="module.datadog[0].datadog_monitor.pod_restarts"
+        MONITOR_MAP["[oficina-tech] High 5xx Error Rate"]="module.datadog[0].datadog_monitor.high_error_rate"
+        MONITOR_MAP["[oficina-tech] High CPU Usage"]="module.datadog[0].datadog_monitor.high_cpu"
+        MONITOR_MAP["[oficina-tech] High Memory Usage"]="module.datadog[0].datadog_monitor.high_memory"
+        MONITOR_MAP["[oficina-tech] Service Order Processing Errors"]="module.datadog[0].datadog_monitor.service_order_processing_errors"
+        MONITOR_MAP["[oficina-tech] Service Order Failure Rate"]="module.datadog[0].datadog_monitor.service_order_failure_rate"
+        MONITOR_MAP["[oficina-tech] Service Order Stuck in Status"]="module.datadog[0].datadog_monitor.service_order_stuck"
+        MONITOR_MAP["[oficina-tech] Service Order Creation Drop"]="module.datadog[0].datadog_monitor.service_order_creation_drop"
+        IMPORTED=0
+        while IFS=$'\t' read -r id name; do
+          addr="${MONITOR_MAP[$name]}"
+          if [ -n "$addr" ]; then
+            echo "::notice::Importando '$name' (id=$id) → $addr"
+            terraform import "$addr" "$id" || true
+            IMPORTED=$((IMPORTED + 1))
+          fi
+        done < <(echo "$MONITORS_JSON" | jq -r '.[] | [.id, .name] | @tsv')
+        echo "::notice::$IMPORTED monitor(s) importado(s) do Datadog"
+
     - name: Terraform Plan
       id: plan
       if: steps.download_plan.outcome != 'success'
