@@ -1,4 +1,4 @@
-﻿name: Destroy Infrastructure
+name: Destroy Infrastructure
 
 on:
   workflow_dispatch:
@@ -27,10 +27,11 @@ concurrency:
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   ENVIRONMENT: ${{ github.event.inputs.environment }}
+  TF_DIR: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
 
 jobs:
   destroy:
-    name: Destroy â€” ${{ github.event.inputs.environment }}
+    name: Destroy — ${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: ${{ github.event.inputs.environment }}-destroy
@@ -61,7 +62,7 @@ jobs:
           terraform_wrapper: false
 
       - name: Terraform Init
-        working-directory: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
+        working-directory: ${{ env.TF_DIR }}
         env:
           TF_BACKEND_BUCKET: ${{ vars.TF_STATE_BUCKET || 'fiap-soat-tf-backend-oficina-tech' }}
           TF_BACKEND_REGION: ${{ env.AWS_REGION }}
@@ -74,60 +75,75 @@ jobs:
             -backend-config="bucket=$TF_BACKEND_BUCKET" \
             -backend-config="region=$TF_BACKEND_REGION"
 
-      - name: Scale Down Node Group to Zero
-        continue-on-error: true
+      - name: Get EKS Cluster Name
+        id: eks
+        working-directory: ${{ env.TF_DIR }}
         run: |
-          EKS_CLUSTER=$(cd "${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}" \
-            && terraform output -raw eks_cluster_name 2>/dev/null || echo "")
-
-          if [ -z "$EKS_CLUSTER" ]; then
-            echo "Cluster não encontrado, pulando scale-down."
-            exit 0
+          NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "")
+          echo "cluster_name=$NAME" >> $GITHUB_OUTPUT
+          if [ -n "$NAME" ]; then
+            echo "Cluster encontrado no state: $NAME"
+          else
+            echo "Nenhum cluster no state — possivelmente já destruído."
           fi
 
+      - name: Delete Kubernetes Resources
+        if: steps.eks.outputs.cluster_name != ''
+        continue-on-error: true
+        env:
+          EKS_CLUSTER: ${{ steps.eks.outputs.cluster_name }}
+        run: |
+          aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "$AWS_REGION" || exit 0
+          NAMESPACE="${{ vars.K8S_NAMESPACE || 'app-oficina-tech' }}"
+          kubectl delete all --all -n "$NAMESPACE" --ignore-not-found=true 2>/dev/null || true
+          kubectl delete namespace "$NAMESPACE" --ignore-not-found=true 2>/dev/null || true
+          echo "Aguardando 30s para o CCM remover ELBs provisionados pelo K8s..."
+          sleep 30
+
+      - name: Scale Down Node Group to Zero
+        if: steps.eks.outputs.cluster_name != ''
+        continue-on-error: true
+        env:
+          EKS_CLUSTER: ${{ steps.eks.outputs.cluster_name }}
+        run: |
           NODE_GROUP=$(aws eks list-nodegroups \
             --cluster-name "$EKS_CLUSTER" \
-            --region "${{ env.AWS_REGION }}" \
+            --region "$AWS_REGION" \
             --query 'nodegroups[0]' --output text 2>/dev/null || echo "")
 
           if [ -z "$NODE_GROUP" ] || [ "$NODE_GROUP" = "None" ]; then
-            echo "Node group não encontrado, pulando scale-down."
+            echo "Node group não encontrado — pulando scale-down."
             exit 0
           fi
 
-          echo "Escalando $NODE_GROUP para 0 nodes..."
+          echo "Escalando $NODE_GROUP para 0..."
           aws eks update-nodegroup-config \
             --cluster-name "$EKS_CLUSTER" \
             --nodegroup-name "$NODE_GROUP" \
             --scaling-config minSize=0,maxSize=0,desiredSize=0 \
-            --region "${{ env.AWS_REGION }}" || true
+            --region "$AWS_REGION" || true
 
-          echo "Aguardando EC2 terminarem completamente (até 10 min)..."
+          echo "Aguardando instâncias EC2 terminarem (até 10 min)..."
           for i in $(seq 1 20); do
             NODES=$(aws ec2 describe-instances \
               --filters \
                 "Name=tag:eks:cluster-name,Values=$EKS_CLUSTER" \
                 "Name=instance-state-name,Values=running,pending,stopping,shutting-down" \
               --query 'length(Reservations[].Instances[])' \
-              --output text --region "${{ env.AWS_REGION }}" 2>/dev/null || echo "0")
-            echo "Nodes ainda ativos: $NODES"
+              --output text --region "$AWS_REGION" 2>/dev/null || echo "0")
+            echo "  Nodes ativos: $NODES (tentativa $i/20)"
             [ "$NODES" = "0" ] && break
             sleep 30
           done
-          echo "Aguardando 30s para o CNI liberar ENIs..."
-          sleep 30
+          echo "Aguardando 60s para VPC CNI liberar ENIs..."
+          sleep 60
 
       - name: Delete Orphaned ENIs
+        if: steps.eks.outputs.cluster_name != ''
         continue-on-error: true
+        env:
+          EKS_CLUSTER: ${{ steps.eks.outputs.cluster_name }}
         run: |
-          EKS_CLUSTER=$(cd "${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}" \
-            && terraform output -raw eks_cluster_name 2>/dev/null || echo "")
-
-          if [ -z "$EKS_CLUSTER" ]; then
-            echo "Cluster não encontrado, pulando limpeza de ENIs."
-            exit 0
-          fi
-
           echo "Procurando ENIs orphans do VPC CNI..."
 
           ENI_BY_TAG=$(aws ec2 describe-network-interfaces \
@@ -135,42 +151,37 @@ jobs:
               "Name=tag:cluster.k8s.amazonaws.com/name,Values=$EKS_CLUSTER" \
               "Name=status,Values=available" \
             --query 'NetworkInterfaces[].NetworkInterfaceId' \
-            --output text --region "${{ env.AWS_REGION }}" 2>/dev/null || echo "")
+            --output text --region "$AWS_REGION" 2>/dev/null || echo "")
 
           ENI_BY_DESC=$(aws ec2 describe-network-interfaces \
             --filters \
               "Name=description,Values=aws-K8S-*" \
               "Name=status,Values=available" \
             --query 'NetworkInterfaces[].NetworkInterfaceId' \
-            --output text --region "${{ env.AWS_REGION }}" 2>/dev/null || echo "")
+            --output text --region "$AWS_REGION" 2>/dev/null || echo "")
 
-          ALL_ENIS=$(echo "$ENI_BY_TAG $ENI_BY_DESC" | tr ' \t' '\n' | sort -u | grep -E '^eni-')
+          ALL_ENIS=$(echo "$ENI_BY_TAG $ENI_BY_DESC" | tr ' \t' '\n' | sort -u | grep -E '^eni-' || true)
 
           if [ -z "$ALL_ENIS" ]; then
             echo "Nenhuma ENI orphan encontrada."
             exit 0
           fi
 
-          echo "Deletando ENIs orphans: $ALL_ENIS"
+          echo "Deletando ENIs: $ALL_ENIS"
           for ENI in $ALL_ENIS; do
             echo "  → $ENI"
             aws ec2 delete-network-interface \
               --network-interface-id "$ENI" \
-              --region "${{ env.AWS_REGION }}" || true
+              --region "$AWS_REGION" || true
           done
 
-      - name: Delete Kubernetes Resources
-        continue-on-error: true
-        run: |
-          EKS_CLUSTER=$(cd "${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}" \
-            && terraform output -raw eks_cluster_name 2>/dev/null || echo "")
-
-          if [ -n "$EKS_CLUSTER" ]; then
-            aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "${{ env.AWS_REGION }}"
-            kubectl delete all --all -n ${{ vars.K8S_NAMESPACE || 'app-oficina-tech' }} --ignore-not-found=true || true
-            kubectl delete namespace ${{ vars.K8S_NAMESPACE || 'app-oficina-tech' }} --ignore-not-found=true || true
-          fi
-
       - name: Terraform Destroy
-        working-directory: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
-        run: terraform destroy -auto-approve
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          echo "=== Terraform destroy — tentativa 1 ==="
+          if ! terraform destroy -auto-approve; then
+            echo "::warning::Primeira passagem falhou — aguardando 30s e tentando novamente..."
+            sleep 30
+            echo "=== Terraform destroy — tentativa 2 ==="
+            terraform destroy -auto-approve
+          fi
