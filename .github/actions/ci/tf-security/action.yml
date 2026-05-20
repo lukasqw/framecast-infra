@@ -1,6 +1,6 @@
 name: 'CI — Terraform Security Scan'
 description: >
-  Runs tfsec and Checkov against the Terraform configuration and uploads
+  Runs Trivy and Checkov against the Terraform configuration and uploads
   SARIF results to GitHub Security. Both scanners use soft_fail so the step
   never blocks the workflow — findings are visible in the Security tab.
 
@@ -10,35 +10,34 @@ inputs:
     required: false
     default: 'terraform/environments/production'
   minimum_severity:
-    description: 'Minimum severity for tfsec findings (LOW | MEDIUM | HIGH | CRITICAL)'
+    description: 'Minimum severity for findings (LOW | MEDIUM | HIGH | CRITICAL)'
     required: false
     default: 'MEDIUM'
   github_token:
-    description: 'GitHub token to avoid API rate limiting when downloading tfsec'
+    description: 'GitHub token (kept for backwards compatibility)'
     required: false
     default: ''
 
 runs:
   using: composite
   steps:
-    - name: Run tfsec
-      id: tfsec
-      uses: aquasecurity/tfsec-action@v1.0.3
-      env:
-        GITHUB_TOKEN: ${{ inputs.github_token }}
+    - name: Run Trivy
+      id: trivy
+      uses: aquasecurity/trivy-action@0.28.0
       with:
-        working_directory: ${{ inputs.working_dir }}
-        soft_fail: true
+        scan-type: config
+        scan-ref: ${{ inputs.working_dir }}
         format: sarif
-        sarif_file: tfsec-results.sarif
-        additional_args: --minimum-severity ${{ inputs.minimum_severity }}
+        output: trivy-results.sarif
+        severity: ${{ inputs.minimum_severity }},HIGH,CRITICAL
+        exit-code: '0'
 
-    - name: Upload tfsec SARIF
-      if: always() && hashFiles('tfsec-results.sarif') != ''
+    - name: Upload Trivy SARIF
+      if: always() && hashFiles('trivy-results.sarif') != ''
       uses: github/codeql-action/upload-sarif@v4
       continue-on-error: true
       with:
-        sarif_file: tfsec-results.sarif
+        sarif_file: trivy-results.sarif
 
     - name: Run Checkov
       id: checkov
@@ -66,7 +65,7 @@ runs:
           echo ""
           echo "| Scanner | Status |"
           echo "|---------|--------|"
-          echo "| tfsec | ${{ steps.tfsec.outcome }} |"
+          echo "| Trivy | ${{ steps.trivy.outcome }} |"
           echo "| Checkov | ${{ steps.checkov.outcome }} |"
           echo ""
           echo "Check the **Security** tab for full findings."
