@@ -1,6 +1,7 @@
-# Main Configuration - Production Environment
+# Main Configuration — Production Environment
 
-# Security Groups
+# ── Rede & Segurança ────────────────────────────────────────────────────────
+
 module "security_groups" {
   source = "../../modules/security-groups"
 
@@ -10,7 +11,8 @@ module "security_groups" {
   tags = local.common_tags
 }
 
-# EKS Cluster
+# ── EKS ────────────────────────────────────────────────────────────────────
+
 module "eks" {
   source = "../../modules/eks"
 
@@ -38,8 +40,23 @@ module "eks" {
   }
 }
 
-# Network Load Balancer
-# Usado pelo API Gateway para rotear tráfego para os pods via NodePort
+# Permite que o NLB alcance o NodePort 30080 no cluster SG gerenciado pelo EKS
+resource "aws_vpc_security_group_ingress_rule" "eks_cluster_nodeport" {
+  security_group_id = module.eks.cluster_security_group_id
+  description       = "Allow NLB to reach NodePort 30080 (framecast-api)"
+  from_port         = 30080
+  to_port           = 30080
+  ip_protocol       = "tcp"
+  cidr_ipv4         = "0.0.0.0/0"
+
+  tags = merge(local.common_tags, {
+    Name    = "${var.project_name}-eks-nodeport"
+    Purpose = "allow-nlb-to-eks-nodeport"
+  })
+}
+
+# ── NLB — expõe a framecast-api via NodePort 30080 ─────────────────────────
+
 module "nlb" {
   source = "../../modules/nlb"
 
@@ -51,16 +68,95 @@ module "nlb" {
   target_group_port = 30080
   health_check_path = "/health"
 
-  microservice_ports = {
-    ms1 = { node_port = 30081, health_check_path = "/health" }
-    ms2 = { node_port = 30082, health_check_path = "/health" }
-    ms3 = { node_port = 30083, health_check_path = "/health" }
-  }
+  tags = local.common_tags
+}
+
+# ── S3 — buckets de vídeos raw e output ────────────────────────────────────
+
+module "s3" {
+  source = "../../modules/s3"
+
+  bucket_raw           = var.s3_bucket_raw
+  bucket_output        = var.s3_bucket_output
+  multipart_abort_days = var.s3_multipart_abort_days
 
   tags = local.common_tags
 }
 
-# Datadog Monitors (ativo apenas quando as chaves são fornecidas)
+# ── SES — identidade de e-mail para notificações do worker ─────────────────
+
+module "ses" {
+  source = "../../modules/ses"
+
+  from_email = var.ses_from_email
+  domain     = var.ses_domain
+
+  tags = local.common_tags
+}
+
+# ── SQS — fila de processamento + DLQ ──────────────────────────────────────
+# visibility_timeout deve casar com o lease+heartbeat do worker (900s = 15min)
+
+resource "aws_sqs_queue" "dlq" {
+  name                      = "${var.project_name}-processing-dlq"
+  message_retention_seconds = var.sqs_retention_seconds
+
+  tags = merge(local.common_tags, {
+    Name    = "${var.project_name}-processing-dlq"
+    Purpose = "dead-letter-queue"
+  })
+}
+
+resource "aws_sqs_queue" "processing" {
+  name                       = "${var.project_name}-processing"
+  visibility_timeout_seconds = var.sqs_visibility_timeout
+  message_retention_seconds  = var.sqs_retention_seconds
+
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.dlq.arn
+    maxReceiveCount     = var.sqs_max_receive_count
+  })
+
+  tags = merge(local.common_tags, {
+    Name    = "${var.project_name}-processing"
+    Purpose = "video-processing"
+  })
+}
+
+# ── Helm Controllers ────────────────────────────────────────────────────────
+
+# KEDA: escala o framecast-worker por comprimento da fila SQS
+module "keda" {
+  count  = var.enable_keda ? 1 : 0
+  source = "../../modules/keda"
+
+  tags = local.common_tags
+
+  depends_on = [module.eks]
+}
+
+# metrics-server: habilita HPA CPU/memória para a framecast-api
+module "metrics_server" {
+  count  = var.enable_metrics_server ? 1 : 0
+  source = "../../modules/metrics-server"
+
+  depends_on = [module.eks]
+}
+
+# Datadog Agent: DaemonSet com receptor OTLP gRPC (porta 4317)
+module "datadog_agent" {
+  count  = var.enable_datadog_agent && var.datadog_api_key != "" ? 1 : 0
+  source = "../../modules/datadog-agent"
+
+  datadog_api_key = var.datadog_api_key
+  datadog_site    = "datadoghq.com"
+  cluster_name    = var.project_name
+
+  depends_on = [module.eks]
+}
+
+# ── Datadog Monitors (opcional) ─────────────────────────────────────────────
+
 module "datadog" {
   source = "../../modules/datadog"
   count  = var.datadog_api_key != "" ? 1 : 0
@@ -68,71 +164,3 @@ module "datadog" {
   datadog_api_key = var.datadog_api_key
   datadog_app_key = var.datadog_app_key
 }
-
-# SQS Queues — mensageria assíncrona entre microsserviços
-# customer-deleted: ms1 publica → ms2 consome
-resource "aws_sqs_queue" "customer_deleted" {
-  name                       = "${lower(var.project_name)}-customer-deleted"
-  message_retention_seconds  = 86400
-  visibility_timeout_seconds = 30
-
-  tags = merge(local.common_tags, {
-    Name    = "${lower(var.project_name)}-customer-deleted"
-    Purpose = "ms1-to-ms2"
-  })
-}
-
-# inventory-op-requested: ms2 publica → ms3 consome
-resource "aws_sqs_queue" "inventory_op_requested" {
-  name                       = "${lower(var.project_name)}-inventory-op-requested"
-  message_retention_seconds  = 86400
-  visibility_timeout_seconds = 30
-
-  tags = merge(local.common_tags, {
-    Name    = "${lower(var.project_name)}-inventory-op-requested"
-    Purpose = "ms2-to-ms3"
-  })
-}
-
-# inventory-op-succeeded: ms3 publica → ms2 consome
-resource "aws_sqs_queue" "inventory_op_succeeded" {
-  name                       = "${lower(var.project_name)}-inventory-op-succeeded"
-  message_retention_seconds  = 86400
-  visibility_timeout_seconds = 30
-
-  tags = merge(local.common_tags, {
-    Name    = "${lower(var.project_name)}-inventory-op-succeeded"
-    Purpose = "ms3-to-ms2"
-  })
-}
-
-# inventory-op-failed: ms3 publica → ms2 consome
-resource "aws_sqs_queue" "inventory_op_failed" {
-  name                       = "${lower(var.project_name)}-inventory-op-failed"
-  message_retention_seconds  = 86400
-  visibility_timeout_seconds = 30
-
-  tags = merge(local.common_tags, {
-    Name    = "${lower(var.project_name)}-inventory-op-failed"
-    Purpose = "ms3-to-ms2"
-  })
-}
-
-# Regra adicional: Permitir que o NLB alcance a NodePort no cluster security group (auto-criado pelo EKS)
-resource "aws_vpc_security_group_ingress_rule" "eks_cluster_nodeport" {
-  security_group_id = module.eks.cluster_security_group_id
-  description       = "Allow NLB to reach NodePorts 30080-30083 (cluster SG)"
-  from_port         = 30080
-  to_port           = 30083
-  ip_protocol       = "tcp"
-  cidr_ipv4         = "0.0.0.0/0"
-
-  tags = merge(
-    local.common_tags,
-    {
-      Name    = "${var.project_name}-eks-nodeport"
-      Purpose = "allow-nlb-to-eks-nodeport"
-    }
-  )
-}
-

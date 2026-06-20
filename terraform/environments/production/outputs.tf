@@ -1,6 +1,8 @@
-# Outputs - Production Environment
+# Outputs — Production Environment
+# Consumidos por framecast-db e framecast-gateway via terraform_remote_state
 
-# EKS Cluster Outputs
+# ── EKS ────────────────────────────────────────────────────────────────────
+
 output "eks_cluster_name" {
   description = "Nome do cluster EKS"
   value       = module.eks.cluster_name
@@ -24,19 +26,17 @@ output "eks_cluster_certificate_authority" {
 }
 
 output "eks_cluster_version" {
-  description = "Versão do Kubernetes"
+  description = "Versão do Kubernetes em uso"
   value       = module.eks.cluster_version
 }
 
 output "eks_access_entries" {
   description = "Access entries configuradas no cluster"
   value = concat(
-    # Current caller
     [{
       principal_arn = aws_eks_access_entry.current_caller.principal_arn
       type          = aws_eks_access_entry.current_caller.type
     }],
-    # Lab access (se configurado)
     [for entry in aws_eks_access_entry.lab_access : {
       principal_arn = entry.principal_arn
       type          = entry.type
@@ -44,7 +44,8 @@ output "eks_access_entries" {
   )
 }
 
-# VPC e Networking Outputs
+# ── Rede ───────────────────────────────────────────────────────────────────
+
 output "vpc_id" {
   description = "ID da VPC"
   value       = data.aws_vpc.main.id
@@ -56,24 +57,24 @@ output "vpc_cidr_block" {
 }
 
 output "subnet_ids" {
-  description = "IDs das subnets"
+  description = "IDs das subnets (us-east-1a, us-east-1b)"
   value       = local.filtered_subnet_ids
 }
 
-# Security Groups Outputs
 output "eks_security_group_id" {
-  description = "ID do security group do EKS"
+  description = "ID do security group do EKS (módulo security-groups)"
   value       = module.security_groups.eks_security_group_id
 }
 
 output "eks_cluster_security_group_id" {
-  description = "ID do security group auto-criado pelo EKS (usado pelo repo oficina-tech-db)"
+  description = "ID do security group auto-criado pelo EKS (consumido por framecast-db)"
   value       = module.eks.cluster_security_group_id
 }
 
-# NLB Outputs - Usado pelo API Gateway
+# ── NLB — consumido por framecast-gateway ──────────────────────────────────
+
 output "nlb_dns_name" {
-  description = "DNS do Network Load Balancer (usado pelo API Gateway)"
+  description = "DNS do Network Load Balancer"
   value       = module.nlb.nlb_dns_name
 }
 
@@ -83,11 +84,68 @@ output "nlb_arn" {
 }
 
 output "nlb_zone_id" {
-  description = "Zone ID do NLB (para Route53)"
+  description = "Zone ID do NLB (para Route53 no framecast-gateway)"
   value       = module.nlb.nlb_zone_id
 }
 
-# General Outputs
+# ── SQS ────────────────────────────────────────────────────────────────────
+
+output "sqs_queue_url" {
+  description = "URL da fila SQS framecast-processing (outbox dispatcher → worker)"
+  value       = aws_sqs_queue.processing.url
+}
+
+output "sqs_queue_arn" {
+  description = "ARN da fila SQS (usado pelo ScaledObject do KEDA)"
+  value       = aws_sqs_queue.processing.arn
+}
+
+output "sqs_dlq_url" {
+  description = "URL da DLQ framecast-processing-dlq"
+  value       = aws_sqs_queue.dlq.url
+}
+
+output "sqs_dlq_arn" {
+  description = "ARN da DLQ"
+  value       = aws_sqs_queue.dlq.arn
+}
+
+# ── S3 ─────────────────────────────────────────────────────────────────────
+
+output "s3_bucket_raw" {
+  description = "Nome do bucket S3 de vídeos originais (injetar em api/worker via env)"
+  value       = module.s3.bucket_raw
+}
+
+output "s3_bucket_raw_arn" {
+  description = "ARN do bucket S3 raw"
+  value       = module.s3.bucket_raw_arn
+}
+
+output "s3_bucket_output" {
+  description = "Nome do bucket S3 de ZIPs de frames (injetar em api/worker via env)"
+  value       = module.s3.bucket_output
+}
+
+output "s3_bucket_output_arn" {
+  description = "ARN do bucket S3 output"
+  value       = module.s3.bucket_output_arn
+}
+
+# ── SES ────────────────────────────────────────────────────────────────────
+
+output "ses_from_identity" {
+  description = "E-mail remetente verificado no SES"
+  value       = module.ses.from_email
+}
+
+output "ses_from_identity_arn" {
+  description = "ARN da identidade SES"
+  value       = module.ses.email_identity_arn
+}
+
+# ── Geral ──────────────────────────────────────────────────────────────────
+
 output "aws_region" {
   description = "Região AWS"
   value       = var.aws_region
@@ -98,30 +156,21 @@ output "aws_account_id" {
   value       = data.aws_caller_identity.current.account_id
 }
 
-# SQS Outputs — consumidos pelos MSs via infra-connect
-output "sqs_customer_deleted_url" {
-  description = "URL da fila SQS customer-deleted (ms1 → ms2)"
-  value       = aws_sqs_queue.customer_deleted.url
+output "current_caller_info" {
+  description = "Debug: ARN/usuário que executou o Terraform"
+  value = {
+    raw_arn  = local.raw_caller_arn
+    arn      = local.caller_arn
+    username = local.caller_username
+    type     = local.is_user ? "user" : (local.is_role ? "role" : "unknown")
+    account  = local.account_id
+    note     = local.is_assumed_role ? "Converted from assumed-role to role ARN" : "Using original ARN"
+  }
 }
 
-output "sqs_inventory_op_requested_url" {
-  description = "URL da fila SQS inventory-op-requested (ms2 → ms3)"
-  value       = aws_sqs_queue.inventory_op_requested.url
-}
-
-output "sqs_inventory_op_succeeded_url" {
-  description = "URL da fila SQS inventory-op-succeeded (ms3 → ms2)"
-  value       = aws_sqs_queue.inventory_op_succeeded.url
-}
-
-output "sqs_inventory_op_failed_url" {
-  description = "URL da fila SQS inventory-op-failed (ms3 → ms2)"
-  value       = aws_sqs_queue.inventory_op_failed.url
-}
-
-# GitHub Actions Output
+# JSON com todos os outputs relevantes para configurar GitHub Secrets nos repos de app
 output "github_secrets_json" {
-  description = "JSON formatado para criar GitHub Secrets"
+  description = "JSON formatado para criar GitHub Secrets em framecast-api e framecast-worker"
   value = jsonencode({
     EKS_CLUSTER_NAME     = module.eks.cluster_name
     EKS_CLUSTER_ENDPOINT = module.eks.cluster_endpoint
@@ -129,6 +178,10 @@ output "github_secrets_json" {
     VPC_ID               = data.aws_vpc.main.id
     SUBNET_IDS           = join(",", local.filtered_subnet_ids)
     NLB_DNS_NAME         = module.nlb.nlb_dns_name
+    SQS_QUEUE_URL        = aws_sqs_queue.processing.url
+    S3_BUCKET_RAW        = module.s3.bucket_raw
+    S3_BUCKET_OUTPUT     = module.s3.bucket_output
+    SES_FROM_EMAIL       = module.ses.from_email
     AWS_REGION           = var.aws_region
   })
   sensitive = true

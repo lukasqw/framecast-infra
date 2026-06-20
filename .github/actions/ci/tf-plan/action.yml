@@ -16,7 +16,7 @@ inputs:
   tf_state_bucket:
     description: 'S3 bucket for Terraform state — maps to TF_STATE_BUCKET GitHub Actions variable'
     required: false
-    default: 'fiap-soat-tf-backend-oficina-tech'
+    default: 'fiap-soat-tf-backend-framecast'
   aws_access_key_id:
     description: 'AWS Access Key ID'
     required: true
@@ -28,9 +28,6 @@ inputs:
     required: true
   aws_region:
     description: 'AWS region'
-    required: true
-  db_password:
-    description: 'TF_VAR_db_password'
     required: true
   dd_api_key:
     description: 'TF_VAR_datadog_api_key'
@@ -99,7 +96,6 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working_dir }}
       env:
-        TF_VAR_db_password: ${{ inputs.db_password }}
         TF_VAR_datadog_api_key: ${{ inputs.dd_api_key }}
         TF_VAR_datadog_app_key: ${{ inputs.dd_app_key }}
         TF_VAR_datadog_api_url: ${{ inputs.dd_api_url }}

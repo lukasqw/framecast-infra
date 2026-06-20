@@ -1,4 +1,5 @@
-# Network Load Balancer Module
+# Network Load Balancer Module — expõe a framecast-api via NodePort 30080
+
 resource "aws_lb" "this" {
   name               = var.name
   internal           = var.internal
@@ -8,16 +9,13 @@ resource "aws_lb" "this" {
   enable_deletion_protection       = var.enable_deletion_protection
   enable_cross_zone_load_balancing = var.enable_cross_zone_load_balancing
 
-  tags = merge(
-    var.tags,
-    {
-      Name             = var.name
-      ResourceType     = "network-load-balancer"
-      Service          = "elb"
-      LoadBalancerType = "network"
-      Internal         = tostring(var.internal)
-    }
-  )
+  tags = merge(var.tags, {
+    Name             = var.name
+    ResourceType     = "network-load-balancer"
+    Service          = "elb"
+    LoadBalancerType = "network"
+    Internal         = tostring(var.internal)
+  })
 }
 
 resource "aws_lb_target_group" "this" {
@@ -40,17 +38,14 @@ resource "aws_lb_target_group" "this" {
 
   deregistration_delay = var.deregistration_delay
 
-  tags = merge(
-    var.tags,
-    {
-      Name         = "${var.name}-tg"
-      ResourceType = "target-group"
-      Service      = "elb"
-      TargetType   = "instance"
-      Protocol     = "TCP"
-      Port         = tostring(var.target_group_port)
-    }
-  )
+  tags = merge(var.tags, {
+    Name         = "${var.name}-tg"
+    ResourceType = "target-group"
+    Service      = "elb"
+    TargetType   = "instance"
+    Protocol     = "TCP"
+    Port         = tostring(var.target_group_port)
+  })
 }
 
 resource "aws_lb_listener" "http" {
@@ -68,53 +63,4 @@ resource "aws_lb_listener" "http" {
 resource "aws_autoscaling_attachment" "this" {
   autoscaling_group_name = var.asg_name
   lb_target_group_arn    = aws_lb_target_group.this.arn
-}
-
-# ── Target groups, listeners e ASG attachments por microsserviço ────────────
-resource "aws_lb_target_group" "ms" {
-  for_each = var.microservice_ports
-
-  name        = "${var.name}-${each.key}-tg"
-  port        = each.value.node_port
-  protocol    = "TCP"
-  vpc_id      = var.vpc_id
-  target_type = "instance"
-
-  health_check {
-    enabled             = true
-    healthy_threshold   = var.health_check_healthy_threshold
-    unhealthy_threshold = var.health_check_unhealthy_threshold
-    interval            = var.health_check_interval
-    port                = tostring(each.value.node_port)
-    protocol            = "HTTP"
-    path                = each.value.health_check_path
-    matcher             = var.health_check_matcher
-  }
-
-  deregistration_delay = var.deregistration_delay
-
-  tags = merge(var.tags, {
-    Name    = "${var.name}-${each.key}-tg"
-    Service = each.key
-  })
-}
-
-resource "aws_lb_listener" "ms" {
-  for_each = var.microservice_ports
-
-  load_balancer_arn = aws_lb.this.arn
-  port              = each.value.node_port
-  protocol          = "TCP"
-
-  default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.ms[each.key].arn
-  }
-}
-
-resource "aws_autoscaling_attachment" "ms" {
-  for_each = var.microservice_ports
-
-  autoscaling_group_name = var.asg_name
-  lb_target_group_arn    = aws_lb_target_group.ms[each.key].arn
 }

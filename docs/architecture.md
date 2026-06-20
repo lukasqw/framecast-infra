@@ -1,171 +1,136 @@
-# Arquitetura — oficina-tech-infra
+# Arquitetura — framecast-infra
 
-## Visão Geral
+## Visão geral
 
-Infraestrutura base de toda a plataforma na AWS. Provisionado via Terraform: networking (VPC default), cluster EKS, NLB e configurações de IAM/acesso. Todos os outros repos dependem dos outputs deste repo via remote state.
-
----
-
-## Diagrama de Rede
+Este repo provisiona a fundação AWS do Framecast. Os outros repos consomem os outputs via `terraform_remote_state`.
 
 ```
-Internet
-    │
-    ▼
-┌────────────────────────────────────────────────────────────┐
-│              AWS Region (us-east-1)                        │
-│                                                            │
-│  VPC padrão AWS  (172.31.0.0/16)                          │
-│                                                            │
-│  ┌───────────────────────┐  ┌───────────────────────────┐  │
-│  │  Subnet (us-east-1a)  │  │  Subnet (us-east-1b)      │  │
-│  │                       │  │                           │  │
-│  │  ┌─────────────────┐  │  │  ┌─────────────────────┐  │  │
-│  │  │  EKS Node       │  │  │  │  EKS Node           │  │  │
-│  │  │  t3.medium      │  │  │  │  t3.medium          │  │  │
-│  │  └────────┬────────┘  │  │  └──────────┬──────────┘  │  │
-│  └───────────┼───────────┘  └─────────────┼─────────────┘  │
-│              │                             │                │
-│              └──────────────┬──────────────┘                │
-│                             │                               │
-│                    ┌────────▼────────┐                      │
-│                    │  NLB (Network   │                      │
-│                    │  Load Balancer) │                      │
-│                    │  Port 80→30080  │                      │
-│                    └────────┬────────┘                      │
-└─────────────────────────────┼──────────────────────────────┘
-                              │
-                      API Gateway / Clientes
+                    ┌─────────────────────────────────────────────────────┐
+                    │              framecast-infra (este repo)             │
+                    │                                                      │
+  Browser           │  NLB:80 ──► NodePort 30080 ──► framecast-api (K8s) │
+  ───────►  NLB  ───┤                                                      │
+                    │  EKS cluster "framecast"  (t3.medium, 1-3 nodes)    │
+                    │   ├─ namespace: framecast                            │
+                    │   │   ├─ framecast-api  (HPA CPU)                   │
+                    │   │   └─ framecast-worker (ScaledObject KEDA/SQS)   │
+                    │   ├─ namespace: keda                                 │
+                    │   ├─ namespace: kube-system (metrics-server)        │
+                    │   └─ namespace: datadog (Agent DaemonSet, opcional) │
+                    │                                                      │
+                    │  S3: framecast-videos-raw  (upload presigned PUT)   │
+                    │  S3: framecast-videos-output (ZIP frames)           │
+                    │  SQS: framecast-processing + DLQ                    │
+                    │  SES: noreply@framecast.app (notificações worker)   │
+                    └─────────────────────────────────────────────────────┘
 ```
 
----
+## Fluxo de dados
 
-## Componentes Principais
+```
+Browser → PUT presigned → S3 raw
+       → POST /api/videos/upload/complete → api → outbox → SQS framecast-processing
 
-### VPC
+SQS → worker → GET S3 raw → FFmpeg → ZIP → PUT S3 output
+             → UPDATE DB status=DONE
+             → SES email (best-effort)
+             → DeleteMessage
 
-- **Tipo:** VPC padrão da AWS (não criada por este repo — descoberta via data source)
-- **CIDR:** `172.31.0.0/16`
-- **Subnets usadas:** descobertas dinamicamente, filtradas para `us-east-1a` e `us-east-1b`
-- **Sem criação de:** Internet Gateway, NAT Gateway, Route Tables — usa a infraestrutura existente da VPC padrão
+Browser → GET /api/videos/:id → presigned URL S3 output (TTL 1h)
+```
 
-### EKS Cluster
+## Topologia de rede
+
+- **VPC:** padrão AWS (172.31.0.0/16) — descoberta via data source
+- **Subnets:** us-east-1a e us-east-1b (mínimo 2 AZs para EKS)
+- **NLB:** internet-facing, TCP:80 → NodePort 30080
+
+## Security Groups
+
+| SG | Ingress | Egress |
+|---|---|---|
+| `framecast-eks-sg` (módulo security-groups) | 443 (control plane), 30080 (NLB→NodePort) | tudo |
+| Cluster SG auto-criado pelo EKS | 30080 (adicionado via `aws_vpc_security_group_ingress_rule`) | — |
+
+## EKS
 
 | Parâmetro | Valor |
-|-----------|-------|
-| Nome | `EKS-OFICINA-TECH` |
-| Versão Kubernetes | `1.31` |
+|---|---|
+| Nome | `framecast` |
+| Versão K8s | `1.31` |
 | Instance type | `t3.medium` |
-| Nodes (min / desired / max) | `1 / 1 / 2` |
-| Disk size por node | `20 GB` |
+| Nodes (min/desired/max) | `1/1/3` |
 | Capacity type | `ON_DEMAND` |
-| Endpoint público | Sim (`0.0.0.0/0`) |
-| Endpoint privado | Sim |
 | Authentication mode | `API_AND_CONFIG_MAP` |
-| Cluster logs habilitados | `api`, `audit`, `authenticator`, `controllerManager`, `scheduler` |
 
-### Network Load Balancer (NLB)
+## Outputs críticos consumidos por outros repos
 
-- **Tipo:** público (não interno)
-- **Protocolo/Porta listener:** TCP/80
-- **Target:** NodePort `30080` nos nodes EKS (protocolo TCP)
-- **Target type:** `instance` — registra EC2 diretamente via Auto Scaling Group
-- **Health check:** `GET /health` na porta `30080` (HTTP), intervalo 30s, thresholds 3
-- **Cross-zone load balancing:** desabilitado
-- **IP:** apenas DNS name (sem Elastic IP)
-- **Deletion protection:** desabilitada
+| Output | Tipo | Consumidor |
+|---|---|---|
+| `eks_cluster_name` | string | framecast-api, framecast-worker (deploy) |
+| `eks_cluster_endpoint` | string (sensitive) | framecast-api, framecast-worker |
+| `eks_cluster_certificate_authority` | string (sensitive) | framecast-api, framecast-worker |
+| `eks_cluster_security_group_id` | string | **framecast-db** (SG allowlist para RDS) |
+| `vpc_id` | string | framecast-db, framecast-gateway |
+| `vpc_cidr_block` | string | framecast-db |
+| `subnet_ids` | list(string) | framecast-db, framecast-gateway |
+| `nlb_dns_name` | string | **framecast-gateway** (VPC Link) |
+| `nlb_arn` | string | framecast-gateway |
+| `nlb_zone_id` | string | framecast-gateway |
+| `sqs_queue_url` | string | framecast-api (outbox dispatcher) |
+| `sqs_queue_arn` | string | framecast-worker (ScaledObject KEDA) |
+| `s3_bucket_raw` | string | framecast-api, framecast-worker |
+| `s3_bucket_output` | string | framecast-api, framecast-worker |
+| `ses_from_identity` | string | framecast-worker |
+| `github_secrets_json` | JSON (sensitive) | CI/CD de todos os repos |
 
-### Security Group (`eks-sg`)
+> **Nunca renomear outputs** sem coordenar com os repos consumidores.
 
-| Direção | Protocolo | Porta | Origem |
-|---------|-----------|-------|--------|
-| Entrada | TCP | 443 | `0.0.0.0/0` |
-| Entrada | TCP | 30080 | `0.0.0.0/0` |
-| Saída | Todos | Todas | `0.0.0.0/0` |
+## Remote state
 
-> A mesma regra de entrada na porta `30080` também é adicionada ao security group auto-criado pelo EKS (`cluster_security_group_id`).
-
-### Controllers no EKS
-
-Os módulos Terraform para os controllers existem mas **não são instanciados em produção**:
-
-| Controller | Helm Chart | Versão | Status |
-|------------|-----------|--------|--------|
-| AWS Load Balancer Controller | `aws-load-balancer-controller` | `1.7.0` | Módulo não instanciado |
-| cert-manager | `cert-manager` | `v1.13.0` | Módulo não instanciado |
-
----
-
-## IAM e Acesso ao Cluster
-
-### Roles
-
-- Cluster EKS e node group usam `arn:aws:iam::<account_id>:role/LabRole` (AWS Academy)
-- IRSA (IAM Roles for Service Accounts) **não está configurado** — o OIDC Provider não é criado
-
-### Access Entries (EKS Access API)
-
-Dois access entries são criados automaticamente:
-
-| Entry | Principal | Política |
-|-------|-----------|---------|
-| `current_caller` | ARN do caller Terraform (auto-detectado) | `AmazonEKSClusterAdminPolicy` |
-| `lab_access` (opcional) | `var.principal_arn` (se fornecido) | `AmazonEKSClusterAdminPolicy` |
-
-- **aws-auth ConfigMap:** não criado via Terraform (evita o problema "chicken and egg")
-- Acesso humano: `aws eks update-kubeconfig --name EKS-OFICINA-TECH --region us-east-1`
-
----
-
-## Estrutura do Projeto
-
-```
-oficina-tech-infra/
-├── terraform/
-│   ├── modules/
-│   │   ├── eks/                    ← cluster + node group
-│   │   ├── nlb/                    ← Network Load Balancer
-│   │   ├── security-groups/        ← security groups da VPC
-│   │   ├── alb-controller/         ← Helm: AWS LB Controller + cert-manager (não instanciado)
-│   │   └── alb-controller-role/    ← IAM role para o ALB Controller via IRSA (não instanciado)
-│   └── environments/
-│       └── production/
-│           ├── main.tf             ← instancia os módulos (eks, nlb, security-groups)
-│           ├── data.tf             ← data sources (VPC, subnets, account ID)
-│           ├── locals.tf           ← filtro de subnets e conversão de ARN LabRole
-│           ├── eks-access.tf       ← access entries do EKS
-│           ├── backend.tf          ← remote state S3
-│           ├── outputs.tf          ← outputs consumidos por outros repos
-│           ├── variables.tf        ← variáveis e defaults
-│           └── versions.tf         ← Terraform ≥1.0, AWS ~>5.0, Datadog ~>3.0
-└── docs/
+```hcl
+data "terraform_remote_state" "infra" {
+  backend = "s3"
+  config = {
+    bucket = "fiap-soat-tf-backend-framecast"
+    key    = "framecast/infra/terraform.tfstate"
+    region = "us-east-1"
+  }
+}
 ```
 
----
+## Módulos
 
-## Remote State S3
+| Módulo | Recursos provisionados |
+|---|---|
+| `eks` | `aws_eks_cluster` + `aws_eks_node_group` |
+| `nlb` | `aws_lb` + target group TCP:30080 + `aws_autoscaling_attachment` |
+| `security-groups` | SG EKS + regras 443/30080 |
+| `s3` | 2 buckets + public access block + SSE-S3 + CORS + lifecycle |
+| `ses` | `aws_ses_email_identity` (+ `aws_ses_domain_identity` opcional) |
+| `keda` | Helm release KEDA (namespace `keda`) |
+| `metrics-server` | Helm release metrics-server (namespace `kube-system`) |
+| `datadog-agent` | Helm release Datadog Agent DaemonSet (OTLP gRPC 4317) |
+| `datadog` | Monitors + dashboards Terraform Datadog provider (opcional) |
 
-| Parâmetro | Valor |
-|-----------|-------|
-| Bucket | `fiap-soat-tf-backend-bispo-730335587750` |
-| Key | `fiap/infra/terraform.tfstate` |
-| Region | `us-east-1` |
-| DynamoDB lock | não configurado |
+## Deploy em dois passos
 
----
+O cluster EKS deve existir antes dos providers Helm/Kubernetes serem configurados:
 
-## Outputs Críticos (consumidos por outros repos)
+```bash
+# Passo 1: infraestrutura AWS
+terraform apply \
+  -target=module.security_groups \
+  -target=module.eks \
+  -target=module.nlb \
+  -target=module.s3 \
+  -target=module.ses \
+  -target=aws_sqs_queue.dlq \
+  -target=aws_sqs_queue.processing \
+  -target=aws_eks_access_entry.current_caller \
+  -target=aws_eks_access_policy_association.current_caller_policy \
+  -target=aws_vpc_security_group_ingress_rule.eks_cluster_nodeport
 
-| Output | Valor | Consumido por |
-|--------|-------|--------------|
-| `vpc_id` | ID da VPC | `oficina-tech-db` |
-| `vpc_cidr_block` | `172.31.0.0/16` | `oficina-tech-db` |
-| `subnet_ids` | IDs das subnets em 1a e 1b | `oficina-tech-db` |
-| `eks_security_group_id` | ID do SG criado pelo módulo | `oficina-tech-db` |
-| `eks_cluster_security_group_id` | ID do SG auto-criado pelo EKS | `oficina-tech-db` |
-| `eks_cluster_name` | `EKS-OFICINA-TECH` | CI/CD de `oficina-tech` |
-| `eks_cluster_endpoint` | URL do API server (sensitive) | CI/CD de `oficina-tech` |
-| `eks_cluster_certificate_authority` | CA do cluster (sensitive) | CI/CD de `oficina-tech` |
-| `nlb_dns_name` | DNS do NLB | `oficina-tech-api-gateway` |
-| `nlb_arn` | ARN do NLB | `oficina-tech-api-gateway` |
-| `github_secrets_json` | JSON com todos os secrets do CI/CD (sensitive) | GitHub Actions |
+# Passo 2: controllers Helm
+terraform apply
+```

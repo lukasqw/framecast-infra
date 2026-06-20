@@ -1,4 +1,4 @@
-﻿name: CI
+name: CI
 
 on:
   pull_request:
@@ -42,8 +42,7 @@ jobs:
 
   # ===========================================
   # STAGE 2: Security & Plan (parallel)
-  # Plan only runs on PRs â€” on push to develop it has no PR to comment on
-  # and the result is not visible to anyone, so the cost is wasted.
+  # Plan only runs on PRs
   # ===========================================
   security:
     name: Security Scan
@@ -77,12 +76,11 @@ jobs:
         with:
           tf_version: ${{ vars.TF_VERSION || '1.7.0' }}
           working_dir: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
-          tf_state_bucket: ${{ vars.TF_STATE_BUCKET || 'fiap-soat-tf-backend-oficina-tech' }}
+          tf_state_bucket: ${{ vars.TF_STATE_BUCKET || 'fiap-soat-tf-backend-framecast' }}
           aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws_session_token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws_region: ${{ vars.AWS_REGION || 'us-east-1' }}
-          db_password: ${{ secrets.DB_PASSWORD }}
           dd_api_key: ${{ secrets.DD_API_KEY }}
           dd_app_key: ${{ secrets.DD_APP_KEY }}
           dd_api_url: ${{ secrets.DD_API_URL }}

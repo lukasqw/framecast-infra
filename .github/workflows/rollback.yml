@@ -68,7 +68,6 @@ jobs:
           MISSING=()
           [ -z "${{ secrets.AWS_ACCESS_KEY_ID }}" ]     && MISSING+=("AWS_ACCESS_KEY_ID")
           [ -z "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ] && MISSING+=("AWS_SECRET_ACCESS_KEY")
-          [ -z "${{ secrets.DB_PASSWORD }}" ]            && MISSING+=("DB_PASSWORD")
           if [ ${#MISSING[@]} -gt 0 ]; then
             echo "::error::Required secrets missing: ${MISSING[*]}"
             exit 1
@@ -90,11 +89,10 @@ jobs:
           aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws_session_token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws_region: ${{ env.AWS_REGION }}
-          db_password: ${{ secrets.DB_PASSWORD }}
           dd_api_key: ${{ secrets.DD_API_KEY }}
           dd_app_key: ${{ secrets.DD_APP_KEY }}
           dd_api_url: ${{ secrets.DD_API_URL }}
-          k8s_namespace: ${{ vars.K8S_NAMESPACE || 'app-oficina-tech' }}
+          k8s_namespace: ${{ vars.K8S_NAMESPACE || 'framecast' }}
 
       - name: Post-Deploy Health Check
         uses: ./.github/actions/deploy/post-check
@@ -102,7 +100,7 @@ jobs:
           eks_cluster: ${{ steps.apply.outputs.eks_cluster }}
           nlb_dns: ${{ steps.apply.outputs.nlb_dns }}
           aws_region: ${{ env.AWS_REGION }}
-          k8s_namespace: ${{ vars.K8S_NAMESPACE || 'app-oficina-tech' }}
+          k8s_namespace: ${{ vars.K8S_NAMESPACE || 'framecast' }}
           health_endpoint: ${{ vars.HEALTH_ENDPOINT || '/health' }}
 
       - name: Rollback Summary

@@ -65,7 +65,7 @@ Veja [`variables.env.example`](variables.env.example) para a lista completa.
 | `AWS_REGION` | Região AWS |
 | `TF_VERSION` | Versão do Terraform (ex: `1.7.0`) |
 | `TF_WORKING_DIR` | Caminho do módulo Terraform (ex: `terraform/environments/production`) |
-| `K8S_NAMESPACE` | Namespace Kubernetes para o ConfigMap de infra e cleanup |
+| `K8S_NAMESPACE` | Namespace Kubernetes (padrão: `framecast`) |
 
 ### Secrets obrigatórios
 
@@ -74,14 +74,33 @@ Veja [`variables.env.example`](variables.env.example) para a lista completa.
 | `AWS_ACCESS_KEY_ID` | Credencial AWS |
 | `AWS_SECRET_ACCESS_KEY` | Credencial AWS |
 | `AWS_SESSION_TOKEN` | Credencial AWS (sessão temporária) |
-| `DB_PASSWORD` | Senha do banco de dados (`TF_VAR_db_password`) |
-| `DD_API_KEY` | Datadog API key (`TF_VAR_datadog_api_key`) |
+| `DD_API_KEY` | Datadog API key (`TF_VAR_datadog_api_key`) — opcional, monitores desabilitados se ausente |
 | `DD_APP_KEY` | Datadog App key (`TF_VAR_datadog_app_key`) |
 | `DD_API_URL` | Datadog API URL (`TF_VAR_datadog_api_url`) |
 
+> **Não há `DB_PASSWORD` neste repo.** O banco (RDS) é gerenciado pelo `framecast-db`.
+
+### Outputs disponíveis para outros repos
+
+Após o apply, o output `github_secrets_json` contém um JSON com todos os valores que outros repos precisam:
+
+```json
+{
+  "EKS_CLUSTER_NAME": "framecast",
+  "EKS_CLUSTER_ENDPOINT": "...",
+  "EKS_CLUSTER_CA": "...",
+  "SQS_QUEUE_URL": "https://sqs.us-east-1.amazonaws.com/.../framecast-processing",
+  "S3_BUCKET_RAW": "framecast-videos-raw",
+  "S3_BUCKET_OUTPUT": "framecast-videos-output",
+  "SES_FROM_EMAIL": "noreply@framecast.app"
+}
+```
+
+Copiar esses valores como GitHub Secrets nos repos `framecast-api` e `framecast-worker`.
+
 ## Versionamento
 
-Idêntico ao `oficina-tech` — versão calculada automaticamente via [Conventional Commits](https://www.conventionalcommits.org):
+Versão calculada automaticamente via [Conventional Commits](https://www.conventionalcommits.org):
 
 | Padrão de commit | Bump |
 |---|---|
@@ -91,4 +110,4 @@ Idêntico ao `oficina-tech` — versão calculada automaticamente via [Conventio
 
 ## Tag de release
 
-A tag só é criada **após** o health check do NLB confirmar que a infraestrutura está saudável em produção — mesmo padrão do `oficina-tech`.
+A tag só é criada **após** o health check do NLB confirmar que a infraestrutura está saudável em produção.

@@ -1,9 +1,23 @@
 # Provider Configuration
+
 provider "aws" {
   region = var.aws_region
+}
 
-  # Removed default_tags to avoid conflicts with security group rules
-  # Tags are applied directly in each resource instead
+# Helm e Kubernetes providers apontam para o cluster EKS
+# ATENÇÃO: requerem que o cluster já exista — ver README §Deploy em dois passos
+provider "helm" {
+  kubernetes {
+    host                   = data.aws_eks_cluster.cluster.endpoint
+    cluster_ca_certificate = base64decode(data.aws_eks_cluster.cluster.certificate_authority[0].data)
+    token                  = data.aws_eks_cluster_auth.cluster.token
+  }
+}
+
+provider "kubernetes" {
+  host                   = data.aws_eks_cluster.cluster.endpoint
+  cluster_ca_certificate = base64decode(data.aws_eks_cluster.cluster.certificate_authority[0].data)
+  token                  = data.aws_eks_cluster_auth.cluster.token
 }
 
 provider "datadog" {

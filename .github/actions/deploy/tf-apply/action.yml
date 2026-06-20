@@ -1,8 +1,8 @@
 name: 'Deploy — Terraform Apply'
 description: >
-  Initialises Terraform, cleans up any Kubernetes resources not managed by
-  Helm (to prevent conflicts), runs terraform apply and exports the infrastructure
-  outputs (EKS cluster, NLB DNS, VPC). Also applies Kubernetes overlays if present.
+  Initialises Terraform, runs terraform apply and exports the infrastructure
+  outputs (EKS cluster, NLB DNS, VPC). Also creates the framecast namespace
+  and infra ConfigMap in Kubernetes.
   Fails with detailed output on any error — the release tag is NOT created if
   this action fails.
 
@@ -18,7 +18,7 @@ inputs:
   tf_state_bucket:
     description: 'S3 bucket for Terraform state — maps to TF_STATE_BUCKET GitHub Actions variable'
     required: false
-    default: 'fiap-soat-tf-backend-oficina-tech'
+    default: 'fiap-soat-tf-backend-framecast'
   environment:
     description: 'Target environment (e.g. production)'
     required: false
@@ -35,9 +35,6 @@ inputs:
   aws_region:
     description: 'AWS region'
     required: true
-  db_password:
-    description: 'TF_VAR_db_password'
-    required: true
   dd_api_key:
     description: 'TF_VAR_datadog_api_key'
     required: false
@@ -53,7 +50,7 @@ inputs:
   k8s_namespace:
     description: 'Kubernetes namespace — used for the infra ConfigMap'
     required: false
-    default: 'app-oficina-tech'
+    default: 'framecast'
   plan_sha:
     description: >
       SHA of the commit whose CI plan artifact should be reused.
@@ -117,58 +114,9 @@ runs:
         printf 'bucket = "%s"\nregion = "%s"\n' "$TF_BACKEND_BUCKET" "$TF_BACKEND_REGION" > /tmp/backend-override.hcl
         terraform init -backend-config=/tmp/backend-override.hcl
 
-    - name: Import Orphaned Datadog Monitors
-      id: dd_import
-      shell: bash
-      working-directory: ${{ inputs.working_dir }}
-      env:
-        TF_VAR_db_password: ${{ inputs.db_password }}
-        TF_VAR_datadog_api_key: ${{ inputs.dd_api_key }}
-        TF_VAR_datadog_app_key: ${{ inputs.dd_app_key }}
-        TF_VAR_datadog_api_url: ${{ inputs.dd_api_url }}
-      run: |
-        echo "state_changed=false" >> $GITHUB_OUTPUT
-        if [ -z "$TF_VAR_datadog_api_key" ] || [ -z "$TF_VAR_datadog_app_key" ]; then
-          echo "::notice::Datadog credentials ausentes — pulando import de monitors"
-          exit 0
-        fi
-
-        # IDs estáveis — atualize se os monitors forem deletados e recriados no Datadog
-        declare -A MONITORS
-        MONITORS["module.datadog[0].datadog_monitor.high_api_latency"]="283667600"
-        MONITORS["module.datadog[0].datadog_monitor.service_order_failures"]="283667611"
-        MONITORS["module.datadog[0].datadog_monitor.pod_restarts"]="283667608"
-        MONITORS["module.datadog[0].datadog_monitor.high_error_rate"]="283667601"
-        MONITORS["module.datadog[0].datadog_monitor.high_cpu"]="283667604"
-        MONITORS["module.datadog[0].datadog_monitor.high_memory"]="283667602"
-        MONITORS["module.datadog[0].datadog_monitor.service_order_processing_errors"]="283667606"
-        MONITORS["module.datadog[0].datadog_monitor.service_order_failure_rate"]="283667603"
-        MONITORS["module.datadog[0].datadog_monitor.service_order_stuck"]="283667605"
-        MONITORS["module.datadog[0].datadog_monitor.service_order_creation_drop"]="283667599"
-
-        IMPORTED=0
-        for addr in "${!MONITORS[@]}"; do
-          id="${MONITORS[$addr]}"
-          if terraform state show "$addr" > /dev/null 2>&1; then
-            echo "::notice::$addr já está no state — pulando"
-          else
-            echo "::notice::Importando $addr (id=$id)"
-            if terraform import "$addr" "$id"; then
-              IMPORTED=$((IMPORTED + 1))
-            else
-              echo "::error::Falha ao importar $addr (id=$id)"
-            fi
-          fi
-        done
-
-        echo "::notice::$IMPORTED monitor(s) importado(s)"
-        if [ "$IMPORTED" -gt 0 ]; then
-          echo "state_changed=true" >> $GITHUB_OUTPUT
-        fi
-
     - name: Download CI Plan Artifact
       id: download_plan
-      if: inputs.plan_sha != '' && steps.dd_import.outputs.state_changed != 'true'
+      if: inputs.plan_sha != ''
       continue-on-error: true
       uses: actions/download-artifact@v4
       with:
@@ -179,11 +127,7 @@ runs:
       if: inputs.plan_sha != '' && steps.download_plan.outcome != 'success'
       shell: bash
       run: |
-        if [ "${{ steps.dd_import.outputs.state_changed }}" == "true" ]; then
-          echo "::warning::Monitors Datadog foram importados — o plan do CI foi descartado e um novo plan será gerado com o state atualizado."
-        else
-          echo "::warning::CI plan artifact 'tfplan-${{ inputs.plan_sha }}' was not found (expired or unavailable). A fresh plan will be generated — this plan was NOT reviewed in the PR."
-        fi
+        echo "::warning::CI plan artifact 'tfplan-${{ inputs.plan_sha }}' was not found (expired or unavailable). A fresh plan will be generated — this plan was NOT reviewed in the PR."
 
     - name: Terraform Plan
       id: plan
@@ -191,7 +135,6 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working_dir }}
       env:
-        TF_VAR_db_password: ${{ inputs.db_password }}
         TF_VAR_datadog_api_key: ${{ inputs.dd_api_key }}
         TF_VAR_datadog_app_key: ${{ inputs.dd_app_key }}
         TF_VAR_datadog_api_url: ${{ inputs.dd_api_url }}
@@ -212,7 +155,6 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working_dir }}
       env:
-        TF_VAR_db_password: ${{ inputs.db_password }}
         TF_VAR_datadog_api_key: ${{ inputs.dd_api_key }}
         TF_VAR_datadog_app_key: ${{ inputs.dd_app_key }}
         TF_VAR_datadog_api_url: ${{ inputs.dd_api_url }}
@@ -236,11 +178,11 @@ runs:
         EKS_ENDPOINT=$(terraform output -raw eks_cluster_endpoint 2>/dev/null || echo "")
         VPC_ID=$(terraform output -raw vpc_id 2>/dev/null || echo "")
 
-        echo "nlb_dns=$NLB_DNS"         >> $GITHUB_OUTPUT
-        echo "nlb_arn=$NLB_ARN"         >> $GITHUB_OUTPUT
-        echo "eks_cluster=$EKS_CLUSTER" >> $GITHUB_OUTPUT
+        echo "nlb_dns=$NLB_DNS"           >> $GITHUB_OUTPUT
+        echo "nlb_arn=$NLB_ARN"           >> $GITHUB_OUTPUT
+        echo "eks_cluster=$EKS_CLUSTER"   >> $GITHUB_OUTPUT
         echo "eks_endpoint=$EKS_ENDPOINT" >> $GITHUB_OUTPUT
-        echo "vpc_id=$VPC_ID"           >> $GITHUB_OUTPUT
+        echo "vpc_id=$VPC_ID"             >> $GITHUB_OUTPUT
 
         echo "::notice::EKS: $EKS_CLUSTER | NLB: $NLB_DNS | VPC: $VPC_ID"
 
@@ -257,20 +199,6 @@ runs:
           exit 1
         fi
 
-    - name: Apply Kubernetes Overlays
-      if: steps.outputs.outputs.eks_cluster != ''
-      shell: bash
-      env:
-        ENVIRONMENT: ${{ inputs.environment }}
-      run: |
-        if [ -d "kubernetes/overlays/$ENVIRONMENT" ]; then
-          kubectl apply -k "kubernetes/overlays/$ENVIRONMENT"
-        elif [ -d "kubernetes/overlay" ]; then
-          kubectl apply -k kubernetes/overlay
-        else
-          echo "::notice::No Kubernetes overlay directory found — skipping"
-        fi
-
     - name: Update Infra ConfigMap
       if: steps.outputs.outputs.eks_cluster != ''
       shell: bash
@@ -285,7 +213,6 @@ runs:
           echo "::warning::k8s_namespace não configurado (K8S_NAMESPACE) — pulando ConfigMap de infraestrutura"
           exit 0
         fi
-        # Cria o namespace se ainda não existir (será o mesmo namespace usado pelos microsserviços)
         kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
         kubectl create configmap infra-outputs \
           --from-literal=NLB_DNS="$CM_NLB_DNS" \

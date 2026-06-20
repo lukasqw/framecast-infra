@@ -1,124 +1,230 @@
-resource "datadog_dashboard" "service_orders" {
-  title       = "Oficina Tech - Service Orders"
-  description = "Volume diário e tempo médio por status das ordens de serviço"
+resource "datadog_dashboard" "video_pipeline" {
+  title       = "Framecast - Video Processing Pipeline"
+  description = "Métricas do pipeline de processamento de vídeo: fila SQS, worker, FFmpeg e frames gerados"
   layout_type = "ordered"
 
   # ----------------------------------------------------------------
-  # Widget 1: Volume diário de ordens de serviço
+  # Widget 1: Vídeos processados (done vs error)
   # ----------------------------------------------------------------
   widget {
     timeseries_definition {
-      title       = "Volume diário de ordens de serviço"
+      title       = "Vídeos processados (done vs error)"
       show_legend = true
 
       request {
         formula {
-          formula_expression = "daily_orders"
-          alias              = "Ordens criadas"
+          formula_expression = "done"
+          alias              = "Done"
         }
         query {
           metric_query {
-            name  = "daily_orders"
-            query = "sum:service_order.created{service:oficina-tech}.as_count().rollup(sum, 86400)"
+            name  = "done"
+            query = "sum:video.processed.total{service:framecast-worker,status:done}.as_count()"
           }
         }
         display_type = "bars"
         style {
-          palette    = "dog_classic"
-          line_type  = "solid"
-          line_width = "normal"
+          palette = "green"
+        }
+      }
+
+      request {
+        formula {
+          formula_expression = "err"
+          alias              = "Error"
+        }
+        query {
+          metric_query {
+            name  = "err"
+            query = "sum:video.processed.total{service:framecast-worker,status:error}.as_count()"
+          }
+        }
+        display_type = "bars"
+        style {
+          palette = "red"
         }
       }
     }
   }
 
   # ----------------------------------------------------------------
-  # Widget 2: Tempo médio por status (heatmap de distribuição)
+  # Widget 2: Duração do processamento p50 / p95
   # ----------------------------------------------------------------
   widget {
     timeseries_definition {
-      title       = "Tempo médio em cada status (segundos)"
+      title       = "Duração de processamento (video.processing.duration)"
       show_legend = true
 
       request {
         formula {
-          formula_expression = "avg_duration"
-          alias              = "Duração média (s)"
+          formula_expression = "p50_dur"
+          alias              = "p50"
         }
         query {
           metric_query {
-            name  = "avg_duration"
-            query = "avg:service_order.status_duration{service:oficina-tech} by {status}"
+            name  = "p50_dur"
+            query = "p50:video.processing.duration{service:framecast-worker,status:done}"
           }
         }
         display_type = "line"
-        style {
-          palette    = "cool"
-          line_type  = "solid"
-          line_width = "normal"
-        }
+        style { palette = "green" }
       }
-    }
-  }
-
-  # ----------------------------------------------------------------
-  # Widget 3: Distribuição p50/p95 por status (tabela de referência)
-  # ----------------------------------------------------------------
-  widget {
-    query_table_definition {
-      title = "Percentis de duração por status"
 
       request {
         formula {
-          formula_expression = "p50"
-          alias              = "p50 (s)"
-          cell_display_mode  = "number"
-        }
-        formula {
-          formula_expression = "p95"
-          alias              = "p95 (s)"
-          cell_display_mode  = "number"
+          formula_expression = "p95_dur"
+          alias              = "p95"
         }
         query {
           metric_query {
-            name  = "p50"
-            query = "p50:service_order.status_duration{service:oficina-tech} by {status}"
+            name  = "p95_dur"
+            query = "p95:video.processing.duration{service:framecast-worker,status:done}"
           }
         }
-        query {
-          metric_query {
-            name  = "p95"
-            query = "p95:service_order.status_duration{service:oficina-tech} by {status}"
-          }
-        }
+        display_type = "line"
+        style { palette = "orange" }
+      }
+
+      yaxis {
+        label        = "Duração (s)"
+        min          = "0"
+        include_zero = true
+      }
+
+      marker {
+        value        = "y = 600"
+        display_type = "warning dashed"
+        label        = "Warning 10min"
+      }
+      marker {
+        value        = "y = 1200"
+        display_type = "error dashed"
+        label        = "Critical 20min"
       }
     }
   }
 
   # ----------------------------------------------------------------
-  # Widget 4: Volume de transições por status (funil visual)
+  # Widget 3: Duração do FFmpeg p50 / p95
   # ----------------------------------------------------------------
   widget {
     timeseries_definition {
-      title       = "Transições de status"
+      title       = "Duração do FFmpeg (ffmpeg.duration)"
       show_legend = true
 
       request {
         formula {
-          formula_expression = "transitions"
-          alias              = "Transições"
+          formula_expression = "ffmpeg_p50"
+          alias              = "p50"
         }
         query {
           metric_query {
-            name  = "transitions"
-            query = "sum:service_order.status_transition{service:oficina-tech,result:success} by {to_status}.as_count()"
+            name  = "ffmpeg_p50"
+            query = "p50:ffmpeg.duration{service:framecast-worker}"
           }
         }
-        display_type = "bars"
-        style {
-          palette = "purple"
+        display_type = "line"
+        style { palette = "cool" }
+      }
+
+      request {
+        formula {
+          formula_expression = "ffmpeg_p95"
+          alias              = "p95"
         }
+        query {
+          metric_query {
+            name  = "ffmpeg_p95"
+            query = "p95:ffmpeg.duration{service:framecast-worker}"
+          }
+        }
+        display_type = "line"
+        style { palette = "warm" }
+      }
+
+      yaxis {
+        label        = "Duração (s)"
+        min          = "0"
+        include_zero = true
       }
     }
   }
+
+  # ----------------------------------------------------------------
+  # Widget 4: Frames gerados por processamento (distribuição)
+  # ----------------------------------------------------------------
+  widget {
+    timeseries_definition {
+      title       = "Frames gerados por vídeo (video.frame_count)"
+      show_legend = true
+
+      request {
+        formula {
+          formula_expression = "avg_frames"
+          alias              = "Média de frames"
+        }
+        query {
+          metric_query {
+            name  = "avg_frames"
+            query = "avg:video.frame_count{service:framecast-worker}"
+          }
+        }
+        display_type = "line"
+        style { palette = "purple" }
+      }
+    }
+  }
+
+  # ----------------------------------------------------------------
+  # Widget 5: Profundidade da fila SQS
+  # ----------------------------------------------------------------
+  widget {
+    timeseries_definition {
+      title       = "Mensagens visíveis na fila SQS"
+      show_legend = true
+
+      request {
+        formula {
+          formula_expression = "queue_depth"
+          alias              = "framecast-processing"
+        }
+        query {
+          metric_query {
+            name  = "queue_depth"
+            query = "avg:aws.sqs.approximate_number_of_messages_visible{queuename:framecast-processing}"
+          }
+        }
+        display_type = "line"
+        style { palette = "orange" }
+      }
+
+      request {
+        formula {
+          formula_expression = "dlq_depth"
+          alias              = "DLQ"
+        }
+        query {
+          metric_query {
+            name  = "dlq_depth"
+            query = "avg:aws.sqs.approximate_number_of_messages_visible{queuename:framecast-processing-dlq}"
+          }
+        }
+        display_type = "line"
+        style { palette = "red" }
+      }
+
+      marker {
+        value        = "y = 20"
+        display_type = "warning dashed"
+        label        = "Warning 20 msgs"
+      }
+      marker {
+        value        = "y = 50"
+        display_type = "error dashed"
+        label        = "Critical 50 msgs"
+      }
+    }
+  }
+
+  tags = ["service:framecast-worker", "team:backend"]
 }

@@ -18,7 +18,7 @@ inputs:
   k8s_namespace:
     description: 'Kubernetes namespace to check pods in'
     required: false
-    default: 'app-oficina-tech'
+    default: 'framecast'
   health_endpoint:
     description: 'HTTP path to probe on the NLB (used only when skip_nlb_http_probe is false)'
     required: false
@@ -70,8 +70,6 @@ runs:
 
         echo "::notice::EKS cluster is healthy"
 
-    # When skip_nlb_http_probe=true (infra-only deploy): only verifies DNS resolves.
-    # When skip_nlb_http_probe=false (app deployed): probes HTTP /health with retries.
     - name: Check NLB Reachability
       shell: bash
       env:

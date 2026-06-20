@@ -37,7 +37,7 @@ variable "enable_cross_zone_load_balancing" {
 }
 
 variable "target_group_port" {
-  description = "Porta do target group (NodePort)"
+  description = "NodePort da aplicação nos nodes EKS"
   type        = number
   default     = 30080
 }
@@ -55,15 +55,15 @@ variable "health_check_unhealthy_threshold" {
 }
 
 variable "health_check_interval" {
-  description = "Intervalo do health check"
+  description = "Intervalo do health check (segundos)"
   type        = number
   default     = 30
 }
 
 variable "health_check_path" {
-  description = "Path do health check"
+  description = "Path do health check HTTP"
   type        = string
-  default     = "/"
+  default     = "/health"
 }
 
 variable "health_check_matcher" {
@@ -73,18 +73,9 @@ variable "health_check_matcher" {
 }
 
 variable "deregistration_delay" {
-  description = "Delay para deregistrar targets"
+  description = "Delay para deregistrar targets (segundos)"
   type        = number
   default     = 30
-}
-
-variable "microservice_ports" {
-  description = "NodePorts dos microsserviços expostos via NLB (porta listener = porta NodePort)"
-  type = map(object({
-    node_port         = number
-    health_check_path = string
-  }))
-  default = {}
 }
 
 variable "tags" {

@@ -64,7 +64,7 @@ jobs:
       - name: Terraform Init
         working-directory: ${{ env.TF_DIR }}
         env:
-          TF_BACKEND_BUCKET: ${{ vars.TF_STATE_BUCKET || 'fiap-soat-tf-backend-oficina-tech' }}
+          TF_BACKEND_BUCKET: ${{ vars.TF_STATE_BUCKET || 'fiap-soat-tf-backend-framecast' }}
           TF_BACKEND_REGION: ${{ env.AWS_REGION }}
         run: |
           if [ -z "$TF_BACKEND_BUCKET" ]; then

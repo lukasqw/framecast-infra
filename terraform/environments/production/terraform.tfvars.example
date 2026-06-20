@@ -1,12 +1,5 @@
-# Configuração de Exemplo - Production Environment
-# Copie este arquivo para terraform.tfvars e preencha com seus valores
-
-# ============================================================================
-# CONFIGURAÇÕES OBRIGATÓRIAS
-# ============================================================================
-
-# Senha do banco de dados RDS (OBRIGATÓRIO)
-db_password = "SuaSenhaSegura123!"
+# Configuração de Exemplo — Production Environment
+# Copie para terraform.tfvars e preencha com seus valores
 
 # ============================================================================
 # AWS ACADEMY / LEARNER LAB
@@ -14,89 +7,80 @@ db_password = "SuaSenhaSegura123!"
 
 # ARN do principal (usuário ou role) que criou o cluster
 # Para descobrir: aws sts get-caller-identity
-principal_arn = "arn:aws:iam::730335587750:user/awsstudent"
+principal_arn = "arn:aws:iam::123456789012:user/awsstudent"
 
 # ARN da LabRole (AWS Academy)
-lab_role = "arn:aws:iam::730335587750:role/LabRole"
+lab_role = "arn:aws:iam::123456789012:role/LabRole"
 
 # ============================================================================
-# CONFIGURAÇÃO DE ACESSO AO EKS
-# ============================================================================
-
-# Usuários IAM adicionais que precisam acessar o cluster
-additional_users = [
-  {
-    userarn  = "arn:aws:iam::730335587750:user/developer1"
-    username = "developer1"
-    groups   = ["system:masters"]  # Admin completo
-  },
-  {
-    userarn  = "arn:aws:iam::730335587750:user/developer2"
-    username = "developer2"
-    groups   = ["developers"]  # Permissões de edição
-  },
-  {
-    userarn  = "arn:aws:iam::730335587750:user/viewer"
-    username = "viewer"
-    groups   = ["readonly"]  # Apenas visualização
-  }
-]
-
-# Roles IAM adicionais que precisam acessar o cluster
-additional_roles = [
-  {
-    rolearn  = "arn:aws:iam::730335587750:role/DevOpsRole"
-    username = "devops-role"
-    groups   = ["system:masters"]
-  }
-]
-
-# ============================================================================
-# CONFIGURAÇÕES GERAIS
+# GERAL
 # ============================================================================
 
 aws_region   = "us-east-1"
-project_name = "EKS-OFICINA-TECH"
+project_name = "framecast"
+environment  = "production"
 
 # ============================================================================
-# CONFIGURAÇÕES DO EKS
+# EKS
 # ============================================================================
 
 eks_cluster_version = "1.31"
-access_config       = "API_AND_CONFIG_MAP"  # Suporta ambos os métodos de autenticação
-
-# Node Group
-node_group        = "oficina_tech"
-instance_type     = "t3.medium"
-node_desired_size = 1
-node_max_size     = 2
-node_min_size     = 1
+access_config       = "API_AND_CONFIG_MAP"
+node_group          = "framecast"
+instance_type       = "t3.medium"
+node_desired_size   = 2
+node_max_size       = 3
+node_min_size       = 1
 
 # ============================================================================
-# CONFIGURAÇÕES DO RDS
+# S3
 # ============================================================================
 
-rds_engine_version          = "16"
-rds_instance_class          = "db.t3.micro"
-rds_allocated_storage       = 20
-rds_backup_retention_period = 1
-rds_multi_az                = false
-rds_skip_final_snapshot     = true
-rds_deletion_protection     = false
+s3_bucket_raw           = "framecast-videos-raw"
+s3_bucket_output        = "framecast-videos-output"
+s3_multipart_abort_days = 3
 
 # ============================================================================
-# FINOPS - TAGS DE CUSTO
+# SES
+# ============================================================================
+
+ses_from_email = "noreply@framecast.app"
+ses_domain     = ""   # Ex: "framecast.app" — requer registro DNS para verificação
+
+# ============================================================================
+# SQS
+# ============================================================================
+
+sqs_visibility_timeout = 900   # 15 min — deve cobrir lease + heartbeat do worker
+sqs_max_receive_count  = 3
+sqs_retention_seconds  = 1209600  # 14 dias
+
+# ============================================================================
+# CONTROLLERS HELM
+# ============================================================================
+
+enable_keda           = true
+enable_metrics_server = true
+enable_datadog_agent  = false   # true requer datadog_api_key
+
+# ============================================================================
+# FINOPS TAGS
 # ============================================================================
 
 cost_center   = "engineering"
 business_unit = "technology"
-environment   = "production"
 owner         = "devops-team"
-application   = "oficina-tech"
+application   = "framecast"
 microservice  = "shared"
 
-# Opcional: Código do orçamento
-# budget_code = "PROJ-2024-001"
+# Opcional
+# budget_code     = "FIAP-2025-001"
+# expiration_date = "2025-12-31"
 
-# Opcional: Data de expiração (YYYY-MM-DD)
-# expiration_date = "2024-12-31"
+# ============================================================================
+# DATADOG (OPCIONAL)
+# ============================================================================
+
+# datadog_api_key = "sua-api-key"
+# datadog_app_key = "sua-app-key"
+# enable_datadog_agent = true
