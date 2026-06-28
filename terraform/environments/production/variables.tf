@@ -131,6 +131,12 @@ variable "ses_domain" {
   default     = ""
 }
 
+variable "enable_ses" {
+  description = "Provisionar identidade SES (requer ses:VerifyEmailIdentity — desabilitar na AWS Academy/LabRole)"
+  type        = bool
+  default     = false
+}
+
 # SQS
 variable "sqs_visibility_timeout" {
   description = "Visibility timeout da fila (segundos) — deve cobrir o lease+heartbeat do worker (900s = 15min)"
