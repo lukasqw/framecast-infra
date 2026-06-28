@@ -14,19 +14,6 @@
 # Os locals (caller_arn, caller_username, is_user, is_role, account_id) 
 # estão definidos em locals.tf
 
-# Output para debug
-output "current_caller_info" {
-  description = "Informações do usuário/role atual executando o Terraform"
-  value = {
-    raw_arn  = local.raw_caller_arn
-    arn      = local.caller_arn
-    username = local.caller_username
-    type     = local.is_user ? "user" : (local.is_role ? "role" : "unknown")
-    account  = local.account_id
-    note     = local.is_assumed_role ? "Converted from assumed-role to role ARN" : "Using original ARN"
-  }
-}
-
 output "aws_auth_configmap_command" {
   description = "Comando para aplicar o ConfigMap aws-auth manualmente (se necessário)"
   value       = "kubectl apply -f k8s/aws-auth-configmap.yaml ou execute: ./scripts/apply-aws-auth.sh"
