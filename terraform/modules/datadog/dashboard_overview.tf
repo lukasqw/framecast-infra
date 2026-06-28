@@ -18,7 +18,10 @@ resource "datadog_dashboard" "overview" {
           show_legend = true
 
           request {
-            formula { formula_expression = "p50_lat"; alias = "p50" }
+            formula {
+              formula_expression = "p50_lat"
+              alias              = "p50"
+            }
             query {
               metric_query {
                 name  = "p50_lat"
@@ -26,11 +29,17 @@ resource "datadog_dashboard" "overview" {
               }
             }
             display_type = "line"
-            style { palette = "green"; line_width = "normal" }
+            style {
+              palette    = "green"
+              line_width = "normal"
+            }
           }
 
           request {
-            formula { formula_expression = "p95_lat"; alias = "p95" }
+            formula {
+              formula_expression = "p95_lat"
+              alias              = "p95"
+            }
             query {
               metric_query {
                 name  = "p95_lat"
@@ -38,11 +47,17 @@ resource "datadog_dashboard" "overview" {
               }
             }
             display_type = "line"
-            style { palette = "orange"; line_width = "normal" }
+            style {
+              palette    = "orange"
+              line_width = "normal"
+            }
           }
 
           request {
-            formula { formula_expression = "p99_lat"; alias = "p99" }
+            formula {
+              formula_expression = "p99_lat"
+              alias              = "p99"
+            }
             query {
               metric_query {
                 name  = "p99_lat"
@@ -50,12 +65,27 @@ resource "datadog_dashboard" "overview" {
               }
             }
             display_type = "line"
-            style { palette = "red"; line_width = "normal" }
+            style {
+              palette    = "red"
+              line_width = "normal"
+            }
           }
 
-          yaxis { label = "Latência (s)"; min = "0"; include_zero = true }
-          marker { value = "y = 1"; display_type = "warning dashed"; label = "Warning 1s" }
-          marker { value = "y = 2"; display_type = "error dashed"; label = "Critical 2s" }
+          yaxis {
+            label        = "Latência (s)"
+            min          = "0"
+            include_zero = true
+          }
+          marker {
+            value        = "y = 1"
+            display_type = "warning dashed"
+            label        = "Warning 1s"
+          }
+          marker {
+            value        = "y = 2"
+            display_type = "error dashed"
+            label        = "Critical 2s"
+          }
         }
       }
 
@@ -74,9 +104,21 @@ resource "datadog_dashboard" "overview" {
                 aggregator = "last"
               }
             }
-            conditional_formats { comparator = "<";  value = 1; palette = "white_on_green" }
-            conditional_formats { comparator = "<";  value = 2; palette = "white_on_yellow" }
-            conditional_formats { comparator = ">="; value = 2; palette = "white_on_red" }
+            conditional_formats {
+              comparator = "<"
+              value      = 1
+              palette    = "white_on_green"
+            }
+            conditional_formats {
+              comparator = "<"
+              value      = 2
+              palette    = "white_on_yellow"
+            }
+            conditional_formats {
+              comparator = ">="
+              value      = 2
+              palette    = "white_on_red"
+            }
           }
         }
       }
@@ -87,7 +129,10 @@ resource "datadog_dashboard" "overview" {
           show_legend = true
 
           request {
-            formula { formula_expression = "req_rate"; alias = "Req/s" }
+            formula {
+              formula_expression = "req_rate"
+              alias              = "Req/s"
+            }
             query {
               metric_query {
                 name  = "req_rate"
@@ -95,7 +140,10 @@ resource "datadog_dashboard" "overview" {
               }
             }
             display_type = "line"
-            style { palette = "cool"; line_width = "normal" }
+            style {
+              palette    = "cool"
+              line_width = "normal"
+            }
           }
         }
       }
@@ -117,7 +165,10 @@ resource "datadog_dashboard" "overview" {
           show_legend = true
 
           request {
-            formula { formula_expression = "done"; alias = "Done" }
+            formula {
+              formula_expression = "done"
+              alias              = "Done"
+            }
             query {
               metric_query {
                 name  = "done"
@@ -129,7 +180,10 @@ resource "datadog_dashboard" "overview" {
           }
 
           request {
-            formula { formula_expression = "err"; alias = "Error" }
+            formula {
+              formula_expression = "err"
+              alias              = "Error"
+            }
             query {
               metric_query {
                 name  = "err"
@@ -157,8 +211,16 @@ resource "datadog_dashboard" "overview" {
                 aggregator = "last"
               }
             }
-            conditional_formats { comparator = "<="; value = 0; palette = "white_on_green" }
-            conditional_formats { comparator = ">";  value = 0; palette = "white_on_red" }
+            conditional_formats {
+              comparator = "<="
+              value      = 0
+              palette    = "white_on_green"
+            }
+            conditional_formats {
+              comparator = ">"
+              value      = 0
+              palette    = "white_on_red"
+            }
           }
         }
       }
@@ -169,7 +231,10 @@ resource "datadog_dashboard" "overview" {
           show_legend = false
 
           request {
-            formula { formula_expression = "p95_proc"; alias = "p95 processamento" }
+            formula {
+              formula_expression = "p95_proc"
+              alias              = "p95 processamento"
+            }
             query {
               metric_query {
                 name  = "p95_proc"
@@ -180,7 +245,11 @@ resource "datadog_dashboard" "overview" {
             style { palette = "orange" }
           }
 
-          marker { value = "y = 1200"; display_type = "error dashed"; label = "Critical 20min" }
+          marker {
+            value        = "y = 1200"
+            display_type = "error dashed"
+            label        = "Critical 20min"
+          }
         }
       }
     }
@@ -201,7 +270,10 @@ resource "datadog_dashboard" "overview" {
           show_legend = true
 
           request {
-            formula { formula_expression = "(cpu_usage / cpu_limit) * 100"; alias = "CPU %" }
+            formula {
+              formula_expression = "(cpu_usage / cpu_limit) * 100"
+              alias              = "CPU %"
+            }
             query {
               metric_query {
                 name  = "cpu_usage"
@@ -215,12 +287,28 @@ resource "datadog_dashboard" "overview" {
               }
             }
             display_type = "line"
-            style { palette = "warm"; line_width = "normal" }
+            style {
+              palette    = "warm"
+              line_width = "normal"
+            }
           }
 
-          yaxis { label = "CPU (%)"; min = "0"; max = "100"; include_zero = true }
-          marker { value = "y = 70"; display_type = "warning dashed"; label = "Warning 70%" }
-          marker { value = "y = 85"; display_type = "error dashed"; label = "Critical 85%" }
+          yaxis {
+            label        = "CPU (%)"
+            min          = "0"
+            max          = "100"
+            include_zero = true
+          }
+          marker {
+            value        = "y = 70"
+            display_type = "warning dashed"
+            label        = "Warning 70%"
+          }
+          marker {
+            value        = "y = 85"
+            display_type = "error dashed"
+            label        = "Critical 85%"
+          }
         }
       }
 
@@ -230,7 +318,10 @@ resource "datadog_dashboard" "overview" {
           show_legend = true
 
           request {
-            formula { formula_expression = "pods"; alias = "Pods" }
+            formula {
+              formula_expression = "pods"
+              alias              = "Pods"
+            }
             query {
               metric_query {
                 name  = "pods"
@@ -238,10 +329,16 @@ resource "datadog_dashboard" "overview" {
               }
             }
             display_type = "area"
-            style { palette = "green"; line_width = "thin" }
+            style {
+              palette    = "green"
+              line_width = "thin"
+            }
           }
 
-          yaxis { min = "0"; include_zero = true }
+          yaxis {
+            min          = "0"
+            include_zero = true
+          }
         }
       }
 
@@ -251,7 +348,10 @@ resource "datadog_dashboard" "overview" {
           show_legend = true
 
           request {
-            formula { formula_expression = "restarts"; alias = "Restarts" }
+            formula {
+              formula_expression = "restarts"
+              alias              = "Restarts"
+            }
             query {
               metric_query {
                 name  = "restarts"
@@ -262,7 +362,11 @@ resource "datadog_dashboard" "overview" {
             style { palette = "red" }
           }
 
-          marker { value = "y = 2"; display_type = "error dashed"; label = "Critical 2 restarts" }
+          marker {
+            value        = "y = 2"
+            display_type = "error dashed"
+            label        = "Critical 2 restarts"
+          }
         }
       }
     }
@@ -284,7 +388,10 @@ resource "datadog_dashboard" "overview" {
           precision = 2
 
           request {
-            formula { formula_expression = "(success / total) * 100"; alias = "Availability %" }
+            formula {
+              formula_expression = "(success / total) * 100"
+              alias              = "Availability %"
+            }
             query {
               metric_query {
                 name       = "success"
@@ -299,9 +406,21 @@ resource "datadog_dashboard" "overview" {
                 aggregator = "sum"
               }
             }
-            conditional_formats { comparator = ">="; value = 99; palette = "white_on_green" }
-            conditional_formats { comparator = ">="; value = 95; palette = "white_on_yellow" }
-            conditional_formats { comparator = "<";  value = 95; palette = "white_on_red" }
+            conditional_formats {
+              comparator = ">="
+              value      = 99
+              palette    = "white_on_green"
+            }
+            conditional_formats {
+              comparator = ">="
+              value      = 95
+              palette    = "white_on_yellow"
+            }
+            conditional_formats {
+              comparator = "<"
+              value      = 95
+              palette    = "white_on_red"
+            }
           }
         }
       }
@@ -312,7 +431,10 @@ resource "datadog_dashboard" "overview" {
           show_legend = false
 
           request {
-            formula { formula_expression = "(e5xx / total) * 100"; alias = "Error Rate %" }
+            formula {
+              formula_expression = "(e5xx / total) * 100"
+              alias              = "Error Rate %"
+            }
             query {
               metric_query {
                 name  = "e5xx"
@@ -326,11 +448,22 @@ resource "datadog_dashboard" "overview" {
               }
             }
             display_type = "line"
-            style { palette = "red"; line_width = "normal" }
+            style {
+              palette    = "red"
+              line_width = "normal"
+            }
           }
 
-          marker { value = "y = 2"; display_type = "warning dashed"; label = "Warning 2%" }
-          marker { value = "y = 5"; display_type = "error dashed";   label = "Critical 5%" }
+          marker {
+            value        = "y = 2"
+            display_type = "warning dashed"
+            label        = "Warning 2%"
+          }
+          marker {
+            value        = "y = 5"
+            display_type = "error dashed"
+            label        = "Critical 5%"
+          }
         }
       }
     }
