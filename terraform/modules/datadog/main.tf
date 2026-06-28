@@ -130,8 +130,7 @@ resource "datadog_monitor" "sqs_dlq_messages" {
   query = "avg(last_5m):avg:aws.sqs.approximate_number_of_messages_visible{queuename:framecast-processing-dlq} > 0"
 
   monitor_thresholds {
-    critical          = 0
-    critical_recovery = 0
+    critical = 0
   }
 
   notify_no_data    = false

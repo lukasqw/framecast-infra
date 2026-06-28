@@ -70,6 +70,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "raw" {
     id     = "abort-incomplete-multipart"
     status = "Enabled"
 
+    filter {}
+
     abort_incomplete_multipart_upload {
       days_after_initiation = var.multipart_abort_days
     }
