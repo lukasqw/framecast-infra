@@ -469,5 +469,5 @@ resource "datadog_dashboard" "overview" {
     }
   }
 
-  tags = ["team:backend", "project:framecast"]
+  tags = ["team:backend"]
 }

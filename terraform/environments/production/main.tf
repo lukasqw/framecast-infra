@@ -86,6 +86,7 @@ module "s3" {
 # ── SES — identidade de e-mail para notificações do worker ─────────────────
 
 module "ses" {
+  count  = var.enable_ses ? 1 : 0
   source = "../../modules/ses"
 
   from_email = var.ses_from_email
