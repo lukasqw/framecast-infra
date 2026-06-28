@@ -136,12 +136,12 @@ output "s3_bucket_output_arn" {
 
 output "ses_from_identity" {
   description = "E-mail remetente verificado no SES"
-  value       = module.ses.from_email
+  value       = var.enable_ses ? module.ses[0].from_email : var.ses_from_email
 }
 
 output "ses_from_identity_arn" {
   description = "ARN da identidade SES"
-  value       = module.ses.email_identity_arn
+  value       = var.enable_ses ? module.ses[0].email_identity_arn : ""
 }
 
 # ── Geral ──────────────────────────────────────────────────────────────────
@@ -181,7 +181,7 @@ output "github_secrets_json" {
     SQS_QUEUE_URL        = aws_sqs_queue.processing.url
     S3_BUCKET_RAW        = module.s3.bucket_raw
     S3_BUCKET_OUTPUT     = module.s3.bucket_output
-    SES_FROM_EMAIL       = module.ses.from_email
+    SES_FROM_EMAIL       = var.enable_ses ? module.ses[0].from_email : var.ses_from_email
     AWS_REGION           = var.aws_region
   })
   sensitive = true

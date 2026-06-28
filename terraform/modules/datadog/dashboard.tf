@@ -226,5 +226,5 @@ resource "datadog_dashboard" "video_pipeline" {
     }
   }
 
-  tags = ["service:framecast-worker", "team:backend"]
+  tags = ["team:backend"]
 }
