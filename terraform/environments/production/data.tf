@@ -28,8 +28,3 @@ data "aws_eks_cluster" "cluster" {
   depends_on = [module.eks]
 }
 
-data "aws_eks_cluster_auth" "cluster" {
-  name = var.project_name
-
-  depends_on = [module.eks]
-}
