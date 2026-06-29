@@ -86,11 +86,13 @@ jobs:
             echo "Nenhum cluster no state — possivelmente já destruído."
           fi
 
-      - name: Remove Datadog Resources from State
+      - name: Remove Helm Releases from State
         continue-on-error: true
         working-directory: ${{ env.TF_DIR }}
         run: |
-          terraform state rm 'module.datadog[0]' 2>/dev/null || true
+          terraform state rm 'module.datadog[0]'         2>/dev/null || true
+          terraform state rm 'module.keda[0]'            2>/dev/null || true
+          terraform state rm 'module.metrics_server[0]'  2>/dev/null || true
 
       - name: Terraform Destroy (1ª passagem)
         id: destroy_first
