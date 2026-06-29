@@ -20,11 +20,10 @@ data "aws_caller_identity" "current" {}
 
 data "aws_region" "current" {}
 
-# EKS cluster — usado pelos providers helm e kubernetes
-# Só disponível após o cluster ser criado (primeiro apply usa -target=module.eks)
+# EKS cluster — usado pelos providers helm e kubernetes.
+# Sem depends_on: lido no plan para que host/CA fiquem disponíveis ao provider.
+# Pré-requisito: cluster deve existir antes do plan (garantido pelo Bootstrap EKS step).
 data "aws_eks_cluster" "cluster" {
   name = var.project_name
-
-  depends_on = [module.eks]
 }
 
