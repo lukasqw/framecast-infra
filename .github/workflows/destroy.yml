@@ -94,6 +94,22 @@ jobs:
           terraform state rm 'module.keda[0]'            2>/dev/null || true
           terraform state rm 'module.metrics_server[0]'  2>/dev/null || true
 
+      - name: Empty S3 Buckets
+        continue-on-error: true
+        run: |
+          for bucket in framecast-videos-raw framecast-videos-output; do
+            echo "Esvaziando s3://$bucket ..."
+            aws s3 rm "s3://$bucket" --recursive --region "$AWS_REGION" 2>/dev/null || true
+            aws s3api delete-objects \
+              --bucket "$bucket" \
+              --region "$AWS_REGION" \
+              --delete "$(aws s3api list-object-versions \
+                --bucket "$bucket" --region "$AWS_REGION" \
+                --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' \
+                --output json 2>/dev/null)" 2>/dev/null || true
+          done
+          echo "Buckets esvaziados."
+
       - name: Terraform Destroy (1ª passagem)
         id: destroy_first
         continue-on-error: true
