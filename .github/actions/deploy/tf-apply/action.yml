@@ -116,6 +116,7 @@ runs:
 
     - name: Preview Changes
       shell: bash
+      continue-on-error: true  # pode falhar no primeiro deploy (EKS ainda não existe)
       working-directory: ${{ inputs.working_dir }}
       env:
         TF_VAR_datadog_api_key: ${{ inputs.dd_api_key }}
