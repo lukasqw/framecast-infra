@@ -1,7 +1,8 @@
 # S3 Buckets — raw (upload multipart presigned) + output (ZIP de frames)
 
 resource "aws_s3_bucket" "raw" {
-  bucket = var.bucket_raw
+  bucket        = var.bucket_raw
+  force_destroy = true
 
   tags = merge(var.tags, {
     Name         = var.bucket_raw
@@ -12,7 +13,8 @@ resource "aws_s3_bucket" "raw" {
 }
 
 resource "aws_s3_bucket" "output" {
-  bucket = var.bucket_output
+  bucket        = var.bucket_output
+  force_destroy = true
 
   tags = merge(var.tags, {
     Name         = var.bucket_output
