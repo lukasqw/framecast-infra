@@ -51,7 +51,8 @@ resource "datadog_dashboard" "video_pipeline" {
                 query      = "sum:framecast.video.processed.total{status:done}.as_count()"
                 aggregator = "sum"
               }
-            }            conditional_formats {
+            }
+            conditional_formats {
               comparator = ">"
               value      = 0
               palette    = "white_on_green"
@@ -108,7 +109,8 @@ resource "datadog_dashboard" "video_pipeline" {
                 query      = "sum:framecast.worker.sqs.messages.received{$env,$version,$kube_node}.as_count()"
                 aggregator = "sum"
               }
-            }            conditional_formats {
+            }
+            conditional_formats {
               comparator = ">"
               value      = 0
               palette    = "white_on_green"
