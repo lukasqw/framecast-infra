@@ -19,7 +19,7 @@ resource "datadog_dashboard" "video_pipeline" {
         query {
           metric_query {
             name  = "done"
-            query = "sum:video.processed.total{service:framecast-worker,status:done}.as_count()"
+            query = "sum:framecast.video.processed.total{service:framecast-worker,status:done}.as_count()"
           }
         }
         display_type = "bars"
@@ -36,7 +36,7 @@ resource "datadog_dashboard" "video_pipeline" {
         query {
           metric_query {
             name  = "err"
-            query = "sum:video.processed.total{service:framecast-worker,status:error}.as_count()"
+            query = "sum:framecast.video.processed.total{service:framecast-worker,status:error}.as_count()"
           }
         }
         display_type = "bars"
@@ -52,7 +52,7 @@ resource "datadog_dashboard" "video_pipeline" {
   # ----------------------------------------------------------------
   widget {
     timeseries_definition {
-      title       = "Duração de processamento (video.processing.duration)"
+      title       = "Duração de processamento (framecast.video.processing.duration)"
       show_legend = true
 
       request {
@@ -63,7 +63,7 @@ resource "datadog_dashboard" "video_pipeline" {
         query {
           metric_query {
             name  = "p50_dur"
-            query = "p50:video.processing.duration{service:framecast-worker,status:done}"
+            query = "p50:framecast.video.processing.duration{service:framecast-worker,status:done}"
           }
         }
         display_type = "line"
@@ -78,7 +78,7 @@ resource "datadog_dashboard" "video_pipeline" {
         query {
           metric_query {
             name  = "p95_dur"
-            query = "p95:video.processing.duration{service:framecast-worker,status:done}"
+            query = "p95:framecast.video.processing.duration{service:framecast-worker,status:done}"
           }
         }
         display_type = "line"
@@ -109,7 +109,7 @@ resource "datadog_dashboard" "video_pipeline" {
   # ----------------------------------------------------------------
   widget {
     timeseries_definition {
-      title       = "Duração do FFmpeg (ffmpeg.duration)"
+      title       = "Duração do FFmpeg (framecast.ffmpeg.duration)"
       show_legend = true
 
       request {
@@ -120,7 +120,7 @@ resource "datadog_dashboard" "video_pipeline" {
         query {
           metric_query {
             name  = "ffmpeg_p50"
-            query = "p50:ffmpeg.duration{service:framecast-worker}"
+            query = "p50:framecast.ffmpeg.duration{service:framecast-worker}"
           }
         }
         display_type = "line"
@@ -135,7 +135,7 @@ resource "datadog_dashboard" "video_pipeline" {
         query {
           metric_query {
             name  = "ffmpeg_p95"
-            query = "p95:ffmpeg.duration{service:framecast-worker}"
+            query = "p95:framecast.ffmpeg.duration{service:framecast-worker}"
           }
         }
         display_type = "line"
@@ -155,7 +155,7 @@ resource "datadog_dashboard" "video_pipeline" {
   # ----------------------------------------------------------------
   widget {
     timeseries_definition {
-      title       = "Frames gerados por vídeo (video.frame_count)"
+      title       = "Frames gerados por vídeo (framecast.video.frame_count)"
       show_legend = true
 
       request {
@@ -166,7 +166,7 @@ resource "datadog_dashboard" "video_pipeline" {
         query {
           metric_query {
             name  = "avg_frames"
-            query = "avg:video.frame_count{service:framecast-worker}"
+            query = "avg:framecast.video.frame_count{service:framecast-worker}"
           }
         }
         display_type = "line"
