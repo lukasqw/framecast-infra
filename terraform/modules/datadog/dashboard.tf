@@ -74,7 +74,8 @@ resource "datadog_dashboard" "video_pipeline" {
                 name  = "rate"
                 query = "sum:framecast.video.processed.total{$env,$version,$kube_node,status:done}.as_rate()"
               }
-            }          }
+            }
+          }
         }
       }
 
@@ -91,7 +92,8 @@ resource "datadog_dashboard" "video_pipeline" {
                 name  = "dur"
                 query = "p50:framecast.video.processing.duration{$env,$version,$kube_node,status:done}"
               }
-            }          }
+            }
+          }
         }
       }
 
