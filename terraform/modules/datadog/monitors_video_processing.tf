@@ -1,9 +1,9 @@
 # Monitors específicos do pipeline de vídeo — framecast-worker
 # Métricas registradas pelo worker (PLAN_WORKER §10):
 #   video.processing.duration  histogram  status: done|error
-#   video.processed.total      counter    status: done|error
+#   framecast.video.processed.total      counter    status: done|error
 #   video.frame_count          histogram
-#   ffmpeg.duration            histogram
+#   framecast.ffmpeg.duration            histogram
 
 # ------------------------------------------------------------
 # Monitor VP-1: Taxa de sucesso do processamento caiu
@@ -18,7 +18,7 @@ resource "datadog_monitor" "video_success_rate_low" {
     @slack-oncall
   EOT
 
-  query = "sum(last_15m):(sum:video.processed.total{service:framecast-worker,status:done}.as_count() / (sum:video.processed.total{service:framecast-worker,status:done}.as_count() + sum:video.processed.total{service:framecast-worker,status:error}.as_count())) * 100 < 80"
+  query = "sum(last_15m):(sum:framecast.video.processed.total{service:framecast-worker,status:done}.as_count() / (sum:framecast.video.processed.total{service:framecast-worker,status:done}.as_count() + sum:framecast.video.processed.total{service:framecast-worker,status:error}.as_count())) * 100 < 80"
 
   monitor_thresholds {
     critical          = 80
@@ -46,7 +46,7 @@ resource "datadog_monitor" "ffmpeg_duration_high" {
     @slack-oncall
   EOT
 
-  query = "percentile(last_30m):p95:ffmpeg.duration{service:framecast-worker} > 900"
+  query = "percentile(last_30m):p95:framecast.ffmpeg.duration{service:framecast-worker} > 900"
 
   monitor_thresholds {
     critical          = 900   # 15 min
@@ -74,7 +74,7 @@ resource "datadog_monitor" "video_processing_stalled" {
     @slack-oncall
   EOT
 
-  query = "sum(last_30m):sum:video.processed.total{service:framecast-worker}.as_count() < 1"
+  query = "sum(last_30m):sum:framecast.video.processed.total{service:framecast-worker}.as_count() < 1"
 
   monitor_thresholds {
     critical          = 1
