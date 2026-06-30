@@ -47,6 +47,10 @@ inputs:
     description: 'TF_VAR_datadog_api_url'
     required: false
     default: ''
+  dd_enable_agent:
+    description: 'TF_VAR_enable_datadog_agent — set "true" to deploy Datadog Agent DaemonSet'
+    required: false
+    default: ''
   k8s_namespace:
     description: 'Kubernetes namespace — used for the infra ConfigMap'
     required: false
@@ -122,6 +126,7 @@ runs:
         TF_VAR_datadog_api_key: ${{ inputs.dd_api_key }}
         TF_VAR_datadog_app_key: ${{ inputs.dd_app_key }}
         TF_VAR_datadog_api_url: ${{ inputs.dd_api_url }}
+        TF_VAR_enable_datadog_agent: ${{ inputs.dd_enable_agent }}
       run: |
         terraform plan -no-color 2>&1 | tee plan.txt
         if grep -q "No changes" plan.txt; then
@@ -135,6 +140,7 @@ runs:
         TF_VAR_datadog_api_key: ${{ inputs.dd_api_key }}
         TF_VAR_datadog_app_key: ${{ inputs.dd_app_key }}
         TF_VAR_datadog_api_url: ${{ inputs.dd_api_url }}
+        TF_VAR_enable_datadog_agent: ${{ inputs.dd_enable_agent }}
       run: |
         terraform apply -auto-approve \
           -target=module.security_groups \
@@ -149,6 +155,7 @@ runs:
         TF_VAR_datadog_api_key: ${{ inputs.dd_api_key }}
         TF_VAR_datadog_app_key: ${{ inputs.dd_app_key }}
         TF_VAR_datadog_api_url: ${{ inputs.dd_api_url }}
+        TF_VAR_enable_datadog_agent: ${{ inputs.dd_enable_agent }}
       run: |
         echo "::notice::Applying infrastructure changes..."
         terraform apply -auto-approve
