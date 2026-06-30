@@ -176,52 +176,26 @@ resource "datadog_dashboard" "video_pipeline" {
   }
 
   # ----------------------------------------------------------------
-  # Widget 5: Profundidade da fila SQS
+  # Widget 5: Throughput de mensagens SQS recebidas pelo worker
   # ----------------------------------------------------------------
   widget {
     timeseries_definition {
-      title       = "Mensagens visíveis na fila SQS"
+      title       = "Mensagens SQS recebidas pelo worker (rate/min)"
       show_legend = true
 
       request {
         formula {
-          formula_expression = "queue_depth"
-          alias              = "framecast-processing"
+          formula_expression = "msgs"
+          alias              = "Mensagens/min"
         }
         query {
           metric_query {
-            name  = "queue_depth"
-            query = "avg:aws.sqs.approximate_number_of_messages_visible{queuename:framecast-processing}"
+            name  = "msgs"
+            query = "sum:framecast.worker.sqs.messages.received{service:framecast-worker}.as_rate()"
           }
         }
-        display_type = "line"
+        display_type = "bars"
         style { palette = "orange" }
-      }
-
-      request {
-        formula {
-          formula_expression = "dlq_depth"
-          alias              = "DLQ"
-        }
-        query {
-          metric_query {
-            name  = "dlq_depth"
-            query = "avg:aws.sqs.approximate_number_of_messages_visible{queuename:framecast-processing-dlq}"
-          }
-        }
-        display_type = "line"
-        style { palette = "red" }
-      }
-
-      marker {
-        value        = "y = 20"
-        display_type = "warning dashed"
-        label        = "Warning 20 msgs"
-      }
-      marker {
-        value        = "y = 50"
-        display_type = "error dashed"
-        label        = "Critical 50 msgs"
       }
     }
   }
