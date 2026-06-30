@@ -90,6 +90,7 @@ jobs:
         continue-on-error: true
         working-directory: ${{ env.TF_DIR }}
         run: |
+          terraform state rm 'module.datadog_agent[0]'   2>/dev/null || true
           terraform state rm 'module.datadog[0]'         2>/dev/null || true
           terraform state rm 'module.keda[0]'            2>/dev/null || true
           terraform state rm 'module.metrics_server[0]'  2>/dev/null || true
