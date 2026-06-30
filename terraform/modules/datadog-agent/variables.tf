@@ -16,12 +16,6 @@ variable "namespace" {
   default     = "datadog"
 }
 
-variable "chart_version" {
-  description = "Versão do Helm chart datadog"
-  type        = string
-  default     = "3.69.4"
-}
-
 variable "cluster_name" {
   description = "Nome do cluster EKS (usado como tag no Agent)"
   type        = string

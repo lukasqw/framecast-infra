@@ -5,7 +5,6 @@ resource "helm_release" "datadog_agent" {
   name             = "datadog"
   repository       = "https://helm.datadoghq.com"
   chart            = "datadog"
-  version          = var.chart_version
   namespace        = var.namespace
   create_namespace = true
 
