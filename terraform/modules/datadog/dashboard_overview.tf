@@ -25,7 +25,7 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name  = "p50_lat"
-                query = "p50:http.server.request.duration{service:framecast-api,!http.route:/health}"
+                query = "p50:trace.http.server.request.duration{service:framecast-api,!http.route:/health}"
               }
             }
             display_type = "line"
@@ -43,7 +43,7 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name  = "p95_lat"
-                query = "p95:http.server.request.duration{service:framecast-api,!http.route:/health}"
+                query = "p95:trace.http.server.request.duration{service:framecast-api,!http.route:/health}"
               }
             }
             display_type = "line"
@@ -61,7 +61,7 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name  = "p99_lat"
-                query = "p99:http.server.request.duration{service:framecast-api,!http.route:/health}"
+                query = "p99:trace.http.server.request.duration{service:framecast-api,!http.route:/health}"
               }
             }
             display_type = "line"
@@ -100,7 +100,7 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name       = "p95_now"
-                query      = "p95:http.server.request.duration{service:framecast-api}"
+                query      = "p95:trace.http.server.request.duration{service:framecast-api}"
                 aggregator = "last"
               }
             }
@@ -136,7 +136,7 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name  = "req_rate"
-                query = "sum:http.server.request.count{service:framecast-api,!http.route:/health} by {http.route}.as_rate()"
+                query = "sum:trace.http.server.request.hits{service:framecast-api,!http.route:/health} by {http.route}.as_rate()"
               }
             }
             display_type = "line"
@@ -172,7 +172,7 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name  = "done"
-                query = "sum:video.processed.total{service:framecast-worker,status:done}.as_count()"
+                query = "sum:framecast.video.processed.total{service:framecast-worker,status:done}.as_count()"
               }
             }
             display_type = "bars"
@@ -187,7 +187,7 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name  = "err"
-                query = "sum:video.processed.total{service:framecast-worker,status:error}.as_count()"
+                query = "sum:framecast.video.processed.total{service:framecast-worker,status:error}.as_count()"
               }
             }
             display_type = "bars"
@@ -238,7 +238,7 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name  = "p95_proc"
-                query = "p95:video.processing.duration{service:framecast-worker,status:done}"
+                query = "p95:framecast.video.processing.duration{service:framecast-worker,status:done}"
               }
             }
             display_type = "line"
@@ -395,14 +395,14 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name       = "success"
-                query      = "sum:http.server.request.count{service:framecast-api,status_code:2*,!http.route:/health}.as_count()"
+                query      = "sum:trace.http.server.request.hits{service:framecast-api,http_status_code:2*,!http.route:/health}.as_count()"
                 aggregator = "sum"
               }
             }
             query {
               metric_query {
                 name       = "total"
-                query      = "sum:http.server.request.count{service:framecast-api,!http.route:/health}.as_count()"
+                query      = "sum:trace.http.server.request.hits{service:framecast-api,!http.route:/health}.as_count()"
                 aggregator = "sum"
               }
             }
@@ -438,13 +438,13 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name  = "e5xx"
-                query = "sum:http.server.request.count{service:framecast-api,status_code:5*}.as_rate()"
+                query = "sum:trace.http.server.request.hits{service:framecast-api,http_status_code:5*}.as_rate()"
               }
             }
             query {
               metric_query {
                 name  = "total"
-                query = "sum:http.server.request.count{service:framecast-api}.as_rate()"
+                query = "sum:trace.http.server.request.hits{service:framecast-api}.as_rate()"
               }
             }
             display_type = "line"
