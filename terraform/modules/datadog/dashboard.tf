@@ -512,11 +512,26 @@ resource "datadog_dashboard" "video_pipeline" {
                 order  = "desc"
               }
             }
-            columns { field = "status_line"; width = "auto" }
-            columns { field = "timestamp";   width = "auto" }
-            columns { field = "service";     width = "auto" }
-            columns { field = "host";        width = "auto" }
-            columns { field = "content";     width = "full" }
+            columns {
+              field = "status_line"
+              width = "auto"
+            }
+            columns {
+              field = "timestamp"
+              width = "auto"
+            }
+            columns {
+              field = "service"
+              width = "auto"
+            }
+            columns {
+              field = "host"
+              width = "auto"
+            }
+            columns {
+              field = "content"
+              width = "full"
+            }
             response_format = "event_list"
           }
         }
