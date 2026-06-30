@@ -158,10 +158,10 @@ module "datadog_agent" {
 
 # ── Datadog Monitors (opcional) ─────────────────────────────────────────────
 
-module "datadog" {
-  source = "../../modules/datadog"
-  count  = var.datadog_api_key != "" ? 1 : 0
-
-  datadog_api_key = var.datadog_api_key
-  datadog_app_key = var.datadog_app_key
-}
+# module "datadog" {
+#   source = "../../modules/datadog"
+#   count  = var.datadog_api_key != "" ? 1 : 0
+#
+#   datadog_api_key = var.datadog_api_key
+#   datadog_app_key = var.datadog_app_key
+# }

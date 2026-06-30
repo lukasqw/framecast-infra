@@ -149,7 +149,8 @@ resource "datadog_dashboard" "video_pipeline" {
                 name  = "pub"
                 query = "sum:trace.aws_sqs.publish.hits{service:framecast-api,$env}.as_count()"
               }
-            }            display_type    = "bars"
+            }
+            display_type = "bars"
             style { palette = "orange" }
           }
         }
@@ -172,8 +173,10 @@ resource "datadog_dashboard" "video_pipeline" {
                 data_source = "apm_resource_stats"
                 service     = "framecast-api"
                 stat        = "error_rate"
-                env         = "$env"              }
-            }            display_type    = "line"
+                env         = "$env"
+              }
+            }
+            display_type = "line"
             style { palette = "red" }
           }
 
@@ -213,7 +216,8 @@ resource "datadog_dashboard" "video_pipeline" {
                 name  = "done"
                 query = "sum:framecast.video.processed.total{$env,$version,$kube_node,status:done}.as_count()"
               }
-            }            display_type    = "bars"
+            }
+            display_type = "bars"
             style { palette = "green" }
           }
         }
@@ -235,7 +239,8 @@ resource "datadog_dashboard" "video_pipeline" {
                 name  = "msgs"
                 query = "sum:framecast.worker.sqs.messages.received{$env,$version,$kube_node}.as_rate()"
               }
-            }            display_type    = "bars"
+            }
+            display_type = "bars"
             style { palette = "orange" }
           }
         }
@@ -257,7 +262,8 @@ resource "datadog_dashboard" "video_pipeline" {
                 name  = "frames"
                 query = "avg:framecast.video.frame_count{$env,$version,$kube_node}"
               }
-            }            display_type    = "line"
+            }
+            display_type = "line"
             style { palette = "purple" }
           }
         }
@@ -276,7 +282,8 @@ resource "datadog_dashboard" "video_pipeline" {
                 name  = "bynode"
                 query = "sum:framecast.video.processed.total{$env,$version,$kube_node,status:done} by {kube_node}.as_count()"
               }
-            }            display_type    = "bars"
+            }
+            display_type = "bars"
             style { palette = "semantic" }
           }
         }
@@ -341,7 +348,8 @@ resource "datadog_dashboard" "video_pipeline" {
                 name  = "ffmpeg_p95"
                 query = "p95:framecast.ffmpeg.duration{$env,$version,$kube_node}"
               }
-            }            display_type    = "line"
+            }
+            display_type = "line"
           }
 
           yaxis {
@@ -373,7 +381,8 @@ resource "datadog_dashboard" "video_pipeline" {
                 name  = "ffmpeg"
                 query = "p50:framecast.ffmpeg.duration{$env,$version,$kube_node}"
               }
-            }            display_type    = "area"
+            }
+            display_type = "area"
             style { palette = "warm" }
           }
 
@@ -399,8 +408,10 @@ resource "datadog_dashboard" "video_pipeline" {
                 service     = "framecast-worker"
                 stat        = "latency_p95"
                 env         = "$env"
-                group_by    = ["resource_name"]              }
-            }            display_type    = "line"
+                group_by    = ["resource_name"]
+              }
+            }
+            display_type = "line"
             style { palette = "semantic" }
           }
         }
@@ -437,7 +448,8 @@ resource "datadog_dashboard" "video_pipeline" {
                 search { query = "service:framecast-worker status:error $env $version $kube_node" }
                 compute { aggregation = "count" }
               }
-            }            display_type    = "bars"
+            }
+            display_type = "bars"
             style { palette = "red" }
           }
         }
@@ -462,7 +474,8 @@ resource "datadog_dashboard" "video_pipeline" {
                 search { query = "service:framecast-api status:error $env $version $kube_node" }
                 compute { aggregation = "count" }
               }
-            }            display_type    = "bars"
+            }
+            display_type = "bars"
             style { palette = "orange" }
           }
         }
