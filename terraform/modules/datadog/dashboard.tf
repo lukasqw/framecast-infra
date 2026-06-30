@@ -320,10 +320,22 @@ resource "datadog_dashboard" "video_pipeline" {
           legend_columns = ["avg", "min", "max", "value"]
 
           request {
-            formula { alias = "Total p50";  formula_expression = "total_p50" }
-            formula { alias = "Total p95";  formula_expression = "total_p95" }
-            formula { alias = "FFmpeg p50"; formula_expression = "ffmpeg_p50" }
-            formula { alias = "FFmpeg p95"; formula_expression = "ffmpeg_p95" }
+            formula {
+              alias              = "Total p50"
+              formula_expression = "total_p50"
+            }
+            formula {
+              alias              = "Total p95"
+              formula_expression = "total_p95"
+            }
+            formula {
+              alias              = "FFmpeg p50"
+              formula_expression = "ffmpeg_p50"
+            }
+            formula {
+              alias              = "FFmpeg p95"
+              formula_expression = "ffmpeg_p95"
+            }
             query {
               metric_query {
                 name  = "total_p50"
