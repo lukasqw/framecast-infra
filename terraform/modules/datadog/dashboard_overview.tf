@@ -113,9 +113,7 @@ resource "datadog_dashboard" "overview" {
                 query      = "p95:trace.http.server.request{service:framecast-api,$env}"
                 aggregator = "last"
               }
-            }
-            response_format = "scalar"
-            conditional_formats {
+            }            conditional_formats {
               comparator = "<"
               hide_value = false
               palette    = "white_on_green"
@@ -212,9 +210,7 @@ resource "datadog_dashboard" "overview" {
                 query      = "sum:framecast.worker.sqs.messages.received{service:framecast-worker,$env}.as_count()"
                 aggregator = "sum"
               }
-            }
-            response_format = "scalar"
-            conditional_formats {
+            }            conditional_formats {
               comparator = "<="
               hide_value = false
               palette    = "white_on_green"
@@ -474,9 +470,7 @@ resource "datadog_dashboard" "overview" {
                 query      = "sum:trace.http.server.request.hits{service:framecast-api,$env}.as_count()"
                 aggregator = "sum"
               }
-            }
-            response_format = "scalar"
-            conditional_formats {
+            }            conditional_formats {
               comparator = ">="
               hide_value = false
               palette    = "white_on_green"
