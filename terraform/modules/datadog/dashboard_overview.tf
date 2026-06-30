@@ -136,7 +136,7 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name  = "req_rate"
-                query = "sum:trace.http.server.request.hits{service:framecast-api,!http.route:/health} by {http.route}.as_rate()"
+                query = "sum:trace.http.server.request.hits{service:framecast-api,!http_route:/health} by {http_route}.as_rate()"
               }
             }
             display_type = "line"
@@ -207,7 +207,7 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name       = "dlq"
-                query      = "avg:aws.sqs.approximate_number_of_messages_visible{queuename:framecast-processing-dlq}"
+                query      = "sum:framecast.worker.sqs.messages.received{service:framecast-worker}"
                 aggregator = "last"
               }
             }
