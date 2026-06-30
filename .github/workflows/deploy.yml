@@ -96,6 +96,7 @@ jobs:
           dd_api_key: ${{ secrets.DD_API_KEY }}
           dd_app_key: ${{ secrets.DD_APP_KEY }}
           dd_api_url: ${{ secrets.DD_API_URL }}
+          dd_enable_agent: ${{ secrets.DD_API_KEY != '' && 'true' || 'false' }}
           k8s_namespace: ${{ vars.K8S_NAMESPACE || 'framecast' }}
           plan_sha: ${{ github.event.pull_request.head.sha }}
 

@@ -35,6 +35,13 @@ resource "helm_release" "datadog_agent" {
     value = "0.0.0.0:${var.otlp_grpc_port}"
   }
 
+  # hostPort obrigatório: pods acessam o Agent via status.hostIP:4317 (Downward API)
+  # Sem hostPort o Agent escuta só dentro do pod e hostIP:4317 fica inacessível
+  set {
+    name  = "datadog.otlp.receiver.protocols.grpc.useHostPort"
+    value = "true"
+  }
+
   # APM + logs habilitados
   set {
     name  = "datadog.apm.portEnabled"
