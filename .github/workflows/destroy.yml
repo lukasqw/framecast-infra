@@ -78,7 +78,9 @@ jobs:
         id: eks
         working-directory: ${{ env.TF_DIR }}
         run: |
-          NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "")
+          # Filtra apenas linhas que parecem um nome de cluster (alphanum + hífen),
+          # descartando warnings/boxes do Terraform que vão para stdout quando não há outputs.
+          NAME=$(terraform output -raw eks_cluster_name 2>/dev/null | grep -oE '^[a-zA-Z0-9_-]+$' | head -1 || echo "")
           echo "cluster_name=$NAME" >> $GITHUB_OUTPUT
           if [ -n "$NAME" ]; then
             echo "Cluster encontrado no state: $NAME"
@@ -90,6 +92,7 @@ jobs:
         continue-on-error: true
         working-directory: ${{ env.TF_DIR }}
         run: |
+          terraform state rm 'module.datadog_agent[0]'   2>/dev/null || true
           terraform state rm 'module.datadog[0]'         2>/dev/null || true
           terraform state rm 'module.keda[0]'            2>/dev/null || true
           terraform state rm 'module.metrics_server[0]'  2>/dev/null || true
