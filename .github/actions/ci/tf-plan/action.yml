@@ -47,8 +47,11 @@ inputs:
 
 outputs:
   has_changes:
-    description: 'true if the plan contains changes, false otherwise'
+    description: 'true if the plan contains changes, false otherwise ("unknown" if bootstrap_pending)'
     value: ${{ steps.plan.outputs.has_changes }}
+  bootstrap_pending:
+    description: 'true if the plan could not run because the EKS cluster does not exist yet (first deploy pending)'
+    value: ${{ steps.plan.outputs.bootstrap_pending }}
   artifact_name:
     description: 'Name of the uploaded plan artifact'
     value: ${{ steps.artifact.outputs.name }}
@@ -100,16 +103,40 @@ runs:
         TF_VAR_datadog_app_key: ${{ inputs.dd_app_key }}
         TF_VAR_datadog_api_url: ${{ inputs.dd_api_url }}
       run: |
+        set +e
         terraform plan -no-color -out=tfplan 2>&1 | tee plan.txt
-        if grep -q "No changes" plan.txt; then
-          echo "has_changes=false" >> $GITHUB_OUTPUT
-          echo "::notice::No infrastructure changes detected"
-        else
-          echo "has_changes=true" >> $GITHUB_OUTPUT
+        PLAN_EXIT=${PIPESTATUS[0]}
+        set -e
+
+        if [ $PLAN_EXIT -eq 0 ]; then
+          echo "bootstrap_pending=false" >> $GITHUB_OUTPUT
+          if grep -q "No changes" plan.txt; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "::notice::No infrastructure changes detected"
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+          exit 0
         fi
+
+        # Tolera apenas o caso conhecido de state vazio: o cluster EKS ainda não
+        # existe (primeiro deploy pendente), então data.aws_eks_cluster (data.tf)
+        # não pode ser lido pelos providers helm/kubernetes. Rodar o workflow de
+        # Deploy resolve — ver README §Deploy em dois passos. Qualquer outro erro
+        # de plan deve continuar quebrando o CI.
+        if grep -q "couldn't find resource" plan.txt && grep -q "aws_eks_cluster" plan.txt; then
+          echo "::warning::Cluster EKS ainda não existe (primeiro deploy pendente) — plan não conseguiu ler data.aws_eks_cluster. Rode o workflow de Deploy (bootstrap em 2 passos) antes de mesclar mudanças que dependam do cluster."
+          echo "has_changes=unknown" >> $GITHUB_OUTPUT
+          echo "bootstrap_pending=true" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        echo "::error::Terraform plan falhou por um motivo não relacionado ao bootstrap do EKS"
+        exit $PLAN_EXIT
 
     - name: Upload Plan Artifact
       id: artifact
+      if: steps.plan.outputs.bootstrap_pending == 'false'
       uses: actions/upload-artifact@v4
       with:
         name: tfplan-${{ github.sha }}
@@ -140,8 +167,13 @@ runs:
             console.log('Error reading plan:', e.message);
           }
 
-          const output = `## Terraform Plan
+          const bootstrapPending = '${{ steps.plan.outputs.bootstrap_pending }}' === 'true';
+          const notice = bootstrapPending
+            ? '\n> ⚠️ **Cluster EKS ainda não existe** (primeiro deploy pendente) — o plan não conseguiu ler `data.aws_eks_cluster`. Rode o workflow de Deploy antes de mesclar mudanças que dependam do cluster.\n'
+            : '';
 
+          const output = `## Terraform Plan
+          ${notice}
           <details>
           <summary>Click to view full plan</summary>
 
@@ -190,6 +222,7 @@ runs:
           echo "| | |"
           echo "|---|---|"
           echo "| Has changes | \`${{ steps.plan.outputs.has_changes }}\` |"
+          echo "| Bootstrap pending | \`${{ steps.plan.outputs.bootstrap_pending }}\` |"
           echo "| Working dir | \`${{ inputs.working_dir }}\` |"
-          echo "| Artifact | \`tfplan-${{ github.sha }}\` |"
+          echo "| Artifact | \`${{ steps.plan.outputs.bootstrap_pending == 'true' && 'n/a — cluster EKS ainda não existe' || format('tfplan-{0}', github.sha) }}\` |"
         } >> $GITHUB_STEP_SUMMARY

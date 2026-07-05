@@ -16,7 +16,8 @@ Infraestrutura base do Framecast na AWS. Provisionado via Terraform: cluster EKS
 - NLB `framecast-nlb` → NodePort 30080 (framecast-api)
 - Security groups (443 + 30080)
 - SQS `framecast-processing` (visibility 900s) + DLQ (maxReceiveCount=3)
-- S3 `framecast-videos-raw` (CORS PUT, lifecycle abort-multipart 3d) + `framecast-videos-output`
+- S3 `framecast-videos-raw` (CORS PUT, lifecycle abort-multipart **7d**) + `framecast-videos-output` (lifecycle expiration 7d)
+- `enable_ses=false` por padrão — LabRole AWS Academy pode não ter permissão `ses:*`
 - SES identidade verificada (`ses_from_email`)
 - KEDA, metrics-server, Datadog Agent via Helm
 

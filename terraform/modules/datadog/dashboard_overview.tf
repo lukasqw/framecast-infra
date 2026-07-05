@@ -2,30 +2,50 @@ resource "datadog_dashboard" "overview" {
   title       = "Framecast - Overview"
   description = "Visão consolidada: latência da API, processamento de vídeo, recursos K8s e saúde do sistema"
   layout_type = "ordered"
+  reflow_type = "auto"
+
+  tags = ["team:backend", "ai:modified_with_ai"]
+
+  template_variable {
+    name             = "env"
+    prefix           = "env"
+    available_values = ["production"]
+    defaults         = ["production"]
+  }
+
+  template_variable {
+    name             = "kube_deployment"
+    prefix           = "kube_deployment"
+    available_values = ["framecast-api", "framecast-worker"]
+    defaults         = ["framecast-api", "framecast-worker"]
+  }
 
   # ================================================================
-  # SEÇÃO 1 — Latência da framecast-api
+  # GRUPO 1 — Latência da framecast-api
   # ================================================================
   widget {
     group_definition {
       title            = "Latência — framecast-api"
-      layout_type      = "ordered"
       background_color = "vivid_blue"
+      show_title       = true
+      layout_type      = "ordered"
 
       widget {
         timeseries_definition {
-          title       = "Latência HTTP p50 / p95 / p99"
-          show_legend = true
+          title          = "Latencia HTTP p50 / p95 / p99"
+          show_legend    = true
+          legend_layout  = "auto"
+          legend_columns = ["avg", "min", "max", "value", "sum"]
 
           request {
             formula {
-              formula_expression = "p50_lat"
               alias              = "p50"
+              formula_expression = "p50_lat"
             }
             query {
               metric_query {
                 name  = "p50_lat"
-                query = "p50:trace.http.server.request.duration{service:framecast-api,!http.route:/health}"
+                query = "p50:trace.http.server.request{service:framecast-api,$env}"
               }
             }
             display_type = "line"
@@ -37,13 +57,13 @@ resource "datadog_dashboard" "overview" {
 
           request {
             formula {
-              formula_expression = "p95_lat"
               alias              = "p95"
+              formula_expression = "p95_lat"
             }
             query {
               metric_query {
                 name  = "p95_lat"
-                query = "p95:trace.http.server.request.duration{service:framecast-api,!http.route:/health}"
+                query = "p95:trace.http.server.request{service:framecast-api,$env}"
               }
             }
             display_type = "line"
@@ -55,13 +75,13 @@ resource "datadog_dashboard" "overview" {
 
           request {
             formula {
-              formula_expression = "p99_lat"
               alias              = "p99"
+              formula_expression = "p99_lat"
             }
             query {
               metric_query {
                 name  = "p99_lat"
-                query = "p99:trace.http.server.request.duration{service:framecast-api,!http.route:/health}"
+                query = "p99:trace.http.server.request{service:framecast-api,$env}"
               }
             }
             display_type = "line"
@@ -72,26 +92,16 @@ resource "datadog_dashboard" "overview" {
           }
 
           yaxis {
-            label        = "Latência (s)"
-            min          = "0"
             include_zero = true
-          }
-          marker {
-            value        = "y = 1"
-            display_type = "warning dashed"
-            label        = "Warning 1s"
-          }
-          marker {
-            value        = "y = 2"
-            display_type = "error dashed"
-            label        = "Critical 2s"
+            label        = ""
+            min          = "0"
           }
         }
       }
 
       widget {
         query_value_definition {
-          title     = "Latência p95 atual"
+          title     = "Latencia p95 atual"
           autoscale = true
           precision = 3
 
@@ -100,24 +110,27 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name       = "p95_now"
-                query      = "p95:trace.http.server.request.duration{service:framecast-api}"
+                query      = "p95:trace.http.server.request{service:framecast-api,$env}"
                 aggregator = "last"
               }
             }
             conditional_formats {
               comparator = "<"
-              value      = 1
+              hide_value = false
               palette    = "white_on_green"
+              value      = 1
             }
             conditional_formats {
               comparator = "<"
-              value      = 2
+              hide_value = false
               palette    = "white_on_yellow"
+              value      = 2
             }
             conditional_formats {
               comparator = ">="
-              value      = 2
+              hide_value = false
               palette    = "white_on_red"
+              value      = 2
             }
           }
         }
@@ -125,18 +138,19 @@ resource "datadog_dashboard" "overview" {
 
       widget {
         timeseries_definition {
-          title       = "Throughput (req/s) por rota"
-          show_legend = true
+          title         = "Throughput (req/s) por rota"
+          show_legend   = true
+          legend_layout = "auto"
 
           request {
             formula {
-              formula_expression = "req_rate"
               alias              = "Req/s"
+              formula_expression = "req_rate"
             }
             query {
               metric_query {
                 name  = "req_rate"
-                query = "sum:trace.http.server.request.hits{service:framecast-api,!http_route:/health} by {http_route}.as_rate()"
+                query = "sum:trace.http.server.request.hits{service:framecast-api,$env} by {resource_name}.as_rate()"
               }
             }
             display_type = "line"
@@ -151,54 +165,41 @@ resource "datadog_dashboard" "overview" {
   }
 
   # ================================================================
-  # SEÇÃO 2 — Pipeline de Vídeo (framecast-worker)
+  # GRUPO 2 — Pipeline de Vídeo (framecast-worker)
   # ================================================================
   widget {
     group_definition {
       title            = "Pipeline de Vídeo — framecast-worker"
-      layout_type      = "ordered"
       background_color = "vivid_green"
+      show_title       = true
+      layout_type      = "ordered"
 
       widget {
         timeseries_definition {
-          title       = "Vídeos processados (done vs error)"
-          show_legend = true
+          title         = "Videos processados (total)"
+          show_legend   = true
+          legend_layout = "auto"
 
           request {
             formula {
+              alias              = "Processados"
               formula_expression = "done"
-              alias              = "Done"
             }
             query {
               metric_query {
                 name  = "done"
-                query = "sum:framecast.video.processed.total{service:framecast-worker,status:done}.as_count()"
+                query = "sum:framecast.video.processed.total{service:framecast-worker,$env}.as_count()"
               }
             }
             display_type = "bars"
             style { palette = "green" }
-          }
-
-          request {
-            formula {
-              formula_expression = "err"
-              alias              = "Error"
-            }
-            query {
-              metric_query {
-                name  = "err"
-                query = "sum:framecast.video.processed.total{service:framecast-worker,status:error}.as_count()"
-              }
-            }
-            display_type = "bars"
-            style { palette = "red" }
           }
         }
       }
 
       widget {
         query_value_definition {
-          title     = "Mensagens na DLQ"
+          title     = "Mensagens SQS Recebidas"
           autoscale = true
           precision = 0
 
@@ -207,19 +208,21 @@ resource "datadog_dashboard" "overview" {
             query {
               metric_query {
                 name       = "dlq"
-                query      = "sum:framecast.worker.sqs.messages.received{service:framecast-worker}"
-                aggregator = "last"
+                query      = "sum:framecast.worker.sqs.messages.received{service:framecast-worker,$env}.as_count()"
+                aggregator = "sum"
               }
             }
             conditional_formats {
               comparator = "<="
-              value      = 0
+              hide_value = false
               palette    = "white_on_green"
+              value      = 0
             }
             conditional_formats {
               comparator = ">"
-              value      = 0
+              hide_value = false
               palette    = "white_on_red"
+              value      = 0
             }
           }
         }
@@ -227,13 +230,15 @@ resource "datadog_dashboard" "overview" {
 
       widget {
         timeseries_definition {
-          title       = "Duração do processamento p95 (segundos)"
-          show_legend = false
+          title          = "Duração do processamento p95 (segundos)"
+          show_legend    = true
+          legend_layout  = "auto"
+          legend_columns = ["avg", "min", "max", "value", "sum"]
 
           request {
             formula {
-              formula_expression = "p95_proc"
               alias              = "p95 processamento"
+              formula_expression = "p95_proc"
             }
             query {
               metric_query {
@@ -244,11 +249,42 @@ resource "datadog_dashboard" "overview" {
             display_type = "line"
             style { palette = "orange" }
           }
+        }
+      }
 
-          marker {
-            value        = "y = 1200"
-            display_type = "error dashed"
-            label        = "Critical 20min"
+      widget {
+        timeseries_definition {
+          title          = "FFmpeg encoding p50 / p95 (segundos)"
+          show_legend    = true
+          legend_layout  = "auto"
+          legend_columns = ["avg", "min", "max", "value"]
+
+          request {
+            formula {
+              alias              = "p50"
+              formula_expression = "p50_ffmpeg"
+            }
+            formula {
+              alias              = "p95"
+              formula_expression = "p95_ffmpeg"
+            }
+            query {
+              metric_query {
+                name  = "p50_ffmpeg"
+                query = "p50:framecast.ffmpeg.duration{service:framecast-worker,$env}"
+              }
+            }
+            query {
+              metric_query {
+                name  = "p95_ffmpeg"
+                query = "p95:framecast.ffmpeg.duration{service:framecast-worker,$env}"
+              }
+            }
+            display_type = "line"
+            style {
+              palette    = "purple"
+              line_width = "normal"
+            }
           }
         }
       }
@@ -256,34 +292,37 @@ resource "datadog_dashboard" "overview" {
   }
 
   # ================================================================
-  # SEÇÃO 3 — Recursos Kubernetes
+  # GRUPO 3 — Recursos Kubernetes
   # ================================================================
   widget {
     group_definition {
       title            = "Recursos Kubernetes — namespace framecast"
-      layout_type      = "ordered"
       background_color = "vivid_purple"
+      show_title       = true
+      layout_type      = "ordered"
 
       widget {
         timeseries_definition {
-          title       = "CPU Usage (% do limite)"
-          show_legend = true
+          title          = "CPU Usage (% do limite) por deployment"
+          show_legend    = true
+          legend_layout  = "auto"
+          legend_columns = ["avg", "min", "max", "value", "sum"]
 
           request {
             formula {
-              formula_expression = "(cpu_usage / cpu_limit) * 100"
               alias              = "CPU %"
+              formula_expression = "(cpu_usage / cpu_limit) * 100"
             }
             query {
               metric_query {
                 name  = "cpu_usage"
-                query = "avg:kubernetes.cpu.usage.total{kube_namespace:framecast} by {kube_deployment}"
+                query = "avg:kubernetes.cpu.usage.total{kube_namespace:framecast,$kube_deployment} by {kube_deployment}"
               }
             }
             query {
               metric_query {
                 name  = "cpu_limit"
-                query = "avg:kubernetes.cpu.limits{kube_namespace:framecast} by {kube_deployment}"
+                query = "avg:kubernetes.cpu.limits{kube_namespace:framecast,$kube_deployment} by {kube_deployment}"
               }
             }
             display_type = "line"
@@ -294,38 +333,29 @@ resource "datadog_dashboard" "overview" {
           }
 
           yaxis {
-            label        = "CPU (%)"
-            min          = "0"
-            max          = "100"
             include_zero = true
-          }
-          marker {
-            value        = "y = 70"
-            display_type = "warning dashed"
-            label        = "Warning 70%"
-          }
-          marker {
-            value        = "y = 85"
-            display_type = "error dashed"
-            label        = "Critical 85%"
+            scale        = "linear"
+            min          = "auto"
+            max          = "auto"
           }
         }
       }
 
       widget {
         timeseries_definition {
-          title       = "Pods em execução por deployment"
-          show_legend = true
+          title         = "Pods em execucao por deployment"
+          show_legend   = true
+          legend_layout = "auto"
 
           request {
             formula {
-              formula_expression = "pods"
               alias              = "Pods"
+              formula_expression = "pods"
             }
             query {
               metric_query {
                 name  = "pods"
-                query = "sum:kubernetes.pods.running{kube_namespace:framecast} by {kube_deployment}"
+                query = "sum:kubernetes.pods.running{kube_namespace:framecast,$kube_deployment} by {kube_deployment}"
               }
             }
             display_type = "area"
@@ -336,36 +366,71 @@ resource "datadog_dashboard" "overview" {
           }
 
           yaxis {
-            min          = "0"
             include_zero = true
+            min          = "0"
           }
         }
       }
 
       widget {
         timeseries_definition {
-          title       = "Restarts de containers"
-          show_legend = true
+          title          = "Restarts de containers por deployment"
+          show_legend    = true
+          legend_layout  = "auto"
+          legend_columns = ["avg", "min", "max", "value", "sum"]
 
           request {
             formula {
-              formula_expression = "restarts"
               alias              = "Restarts"
+              formula_expression = "restarts"
             }
             query {
               metric_query {
                 name  = "restarts"
-                query = "sum:kubernetes.containers.restarts{kube_namespace:framecast} by {kube_deployment}"
+                query = "sum:kubernetes.containers.restarts{kube_namespace:framecast,$kube_deployment} by {kube_deployment}"
               }
             }
             display_type = "bars"
             style { palette = "red" }
           }
+        }
+      }
 
-          marker {
-            value        = "y = 2"
-            display_type = "error dashed"
-            label        = "Critical 2 restarts"
+      widget {
+        timeseries_definition {
+          title          = "Memory Usage (% do limite) por deployment"
+          show_legend    = true
+          legend_layout  = "auto"
+          legend_columns = ["avg", "min", "max", "value", "sum"]
+
+          request {
+            formula {
+              alias              = "Memory %"
+              formula_expression = "(mem_usage / mem_limit) * 100"
+            }
+            query {
+              metric_query {
+                name  = "mem_usage"
+                query = "avg:kubernetes.memory.usage{kube_namespace:framecast,$kube_deployment} by {kube_deployment}"
+              }
+            }
+            query {
+              metric_query {
+                name  = "mem_limit"
+                query = "avg:kubernetes.memory.limits{kube_namespace:framecast,$kube_deployment} by {kube_deployment}"
+              }
+            }
+            display_type = "line"
+            style {
+              palette    = "cool"
+              line_width = "normal"
+            }
+          }
+
+          yaxis {
+            include_zero = true
+            min          = "0"
+            max          = "100"
           }
         }
       }
@@ -373,53 +438,58 @@ resource "datadog_dashboard" "overview" {
   }
 
   # ================================================================
-  # SEÇÃO 4 — Erros e Disponibilidade
+  # GRUPO 4 — Erros e Disponibilidade
   # ================================================================
   widget {
     group_definition {
       title            = "Erros e Disponibilidade"
-      layout_type      = "ordered"
       background_color = "vivid_red"
+      show_title       = true
+      layout_type      = "ordered"
 
       widget {
         query_value_definition {
-          title     = "Availability (% 2xx)"
-          autoscale = true
-          precision = 2
+          title       = "Availability (% 2xx)"
+          autoscale   = false
+          custom_unit = "%"
+          precision   = 2
 
           request {
             formula {
-              formula_expression = "(success / total) * 100"
               alias              = "Availability %"
+              formula_expression = "(success / total) * 100"
             }
             query {
               metric_query {
                 name       = "success"
-                query      = "sum:trace.http.server.request.hits{service:framecast-api,http_status_code:2*,!http.route:/health}.as_count()"
+                query      = "sum:trace.http.server.request.hits.by_http_status{service:framecast-api,http.status_class:2xx,$env}.as_count()"
                 aggregator = "sum"
               }
             }
             query {
               metric_query {
                 name       = "total"
-                query      = "sum:trace.http.server.request.hits{service:framecast-api,!http.route:/health}.as_count()"
+                query      = "sum:trace.http.server.request.hits{service:framecast-api,$env}.as_count()"
                 aggregator = "sum"
               }
             }
             conditional_formats {
               comparator = ">="
-              value      = 99
+              hide_value = false
               palette    = "white_on_green"
+              value      = 99
             }
             conditional_formats {
               comparator = ">="
-              value      = 95
+              hide_value = false
               palette    = "white_on_yellow"
+              value      = 95
             }
             conditional_formats {
               comparator = "<"
-              value      = 95
+              hide_value = false
               palette    = "white_on_red"
+              value      = 95
             }
           }
         }
@@ -427,24 +497,26 @@ resource "datadog_dashboard" "overview" {
 
       widget {
         timeseries_definition {
-          title       = "Taxa de erros 5xx (%)"
-          show_legend = false
+          title          = "Taxa de erros 4xx + 5xx (%)"
+          show_legend    = true
+          legend_layout  = "auto"
+          legend_columns = ["avg", "min", "max", "value", "sum"]
 
           request {
             formula {
-              formula_expression = "(e5xx / total) * 100"
               alias              = "Error Rate %"
+              formula_expression = "(errors / total) * 100"
             }
             query {
               metric_query {
-                name  = "e5xx"
-                query = "sum:trace.http.server.request.hits{service:framecast-api,http_status_code:5*}.as_rate()"
+                name  = "errors"
+                query = "sum:trace.http.server.request.hits.by_http_status{service:framecast-api,http.status_class:4xx,$env}.as_count()"
               }
             }
             query {
               metric_query {
                 name  = "total"
-                query = "sum:trace.http.server.request.hits{service:framecast-api}.as_rate()"
+                query = "sum:trace.http.server.request.hits{service:framecast-api,$env}.as_count()"
               }
             }
             display_type = "line"
@@ -453,21 +525,8 @@ resource "datadog_dashboard" "overview" {
               line_width = "normal"
             }
           }
-
-          marker {
-            value        = "y = 2"
-            display_type = "warning dashed"
-            label        = "Warning 2%"
-          }
-          marker {
-            value        = "y = 5"
-            display_type = "error dashed"
-            label        = "Critical 5%"
-          }
         }
       }
     }
   }
-
-  tags = ["team:backend"]
 }
