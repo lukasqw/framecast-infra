@@ -109,6 +109,7 @@ flowchart TB
 | DELETE | `/api/videos/upload/:id`                     | Bearer  | Aborta o multipart antes do complete                                |
 | GET    | `/api/videos`                                | Bearer  | Lista paginada (cursor `created_at, id`)                            |
 | GET    | `/api/videos/:id`                            | Bearer  | Detalhe + presigned GET (TTL 1h) do ZIP quando `DONE`               |
+| DELETE | `/api/videos/:id`                            | Bearer  | Apaga vídeo (registro + objetos S3 raw/output); 409 se `PROCESSING`  |
 | GET    | `/health` · `/health/live` · `/health/ready` | público | Liveness/readiness                                                  |
 | GET    | `/swagger/*any`                              | público | Swagger UI (gerado via swaggo/swag)                                 |
 | GET    | `/*`                                         | público | SPA (`index.html`, `app.js`, `style.css`)                           |
